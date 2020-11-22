@@ -83,6 +83,11 @@ public:
     std::uint32_t Fpscr() const;
     void SetFpscr(std::uint32_t value);
 
+    // View and modify ASID
+    std::uint8_t Asid() const;
+    void SetAsid(std::uint8_t value);
+    std::uint8_t MaxAsidAvailable() const;
+
     Context SaveContext() const;
     void SaveContext(Context&) const;
     void LoadContext(const Context&);

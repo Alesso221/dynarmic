@@ -281,6 +281,18 @@ void Jit::SetFpscr(u32 value) {
     return impl->jit_state.SetFpscr(value);
 }
 
+std::uint8_t Jit::Asid() const {
+    return impl->jit_state.Asid();
+}
+
+void Jit::SetAsid(std::uint8_t value) {
+    impl->jit_state.SetAsid(value);
+}
+
+std::uint8_t Jit::MaxAsidAvailable() const {
+    return impl->jit_state.MaxAsidAvailable();
+}
+
 Context Jit::SaveContext() const {
     Context ctx;
     SaveContext(ctx);

@@ -201,4 +201,20 @@ void A32JitState::SetFpscr(u32 FPSCR) {
     }
 }
 
+constexpr u32 ASID_MASK = A32::LocationDescriptor::ASID_MASK;
+constexpr u32 ASID_BIT_SHIFT = A32::LocationDescriptor::ASID_BIT_SHIFT;
+constexpr u32 ASID_BIT_COUNT = 5;
+
+u8 A32JitState::Asid() const {
+    return (upper_location_descriptor >> ASID_BIT_SHIFT) & ASID_MASK;
+}
+
+void A32JitState::SetAsid(u8 ASID) {
+    upper_location_descriptor |= (ASID & ASID_MASK) << ASID_BIT_SHIFT;
+}
+
+u8 A32JitState::MaxAsidAvailable() const {
+    return (1 << ASID_BIT_COUNT);
+}
+
 } // namespace Dynarmic::Backend::X64

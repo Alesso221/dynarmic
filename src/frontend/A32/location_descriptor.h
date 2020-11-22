@@ -27,12 +27,15 @@ public:
     // Indicates bits that should be preserved within descriptors.
     static constexpr u32 CPSR_MODE_MASK  = 0x0600FE20;
     static constexpr u32 FPSCR_MODE_MASK = 0x07F70000;
+    static constexpr u32 ASID_MASK = 0b11111;
+    static constexpr u32 ASID_BIT_SHIFT = 3;
 
-    LocationDescriptor(u32 arm_pc, PSR cpsr, FPSCR fpscr, bool single_stepping = false)
+    LocationDescriptor(u32 arm_pc, PSR cpsr, FPSCR fpscr, u8 asid, bool single_stepping = false)
         : arm_pc(arm_pc)
         , cpsr(cpsr.Value() & CPSR_MODE_MASK)
         , fpscr(fpscr.Value() & FPSCR_MODE_MASK)
         , single_stepping(single_stepping)
+        , asid(asid)
     {}
 
     explicit LocationDescriptor(const IR::LocationDescriptor& o) {
@@ -42,6 +45,7 @@ public:
         fpscr = (o.Value() >> 32) & FPSCR_MODE_MASK;
         cpsr.IT(ITState{static_cast<u8>(o.Value() >> 40)});
         single_stepping = (o.Value() >> 32) & 4;
+        asid = ((o.Value() >> 32) >> ASID_BIT_SHIFT) & ASID_MASK;
     }
 
     u32 PC() const { return arm_pc; }
@@ -107,8 +111,9 @@ public:
         const u64 t_u64 = cpsr.T() ? 1 : 0;
         const u64 e_u64 = cpsr.E() ? 2 : 0;
         const u64 single_stepping_u64 = single_stepping ? 4 : 0;
+        const u64 asid_u64 = (asid & ASID_MASK) << ASID_BIT_SHIFT;
         const u64 it_u64 = u64(cpsr.IT().Value()) << 8;
-        const u64 upper = (fpscr_u64 | t_u64 | e_u64 | single_stepping_u64 | it_u64) << 32;
+        const u64 upper = (fpscr_u64 | t_u64 | e_u64 | asid_u64 | single_stepping_u64 | it_u64) << 32;
         return pc_u64 | upper;
     }
 
@@ -121,6 +126,7 @@ private:
     PSR cpsr;         ///< Current program status register.
     A32::FPSCR fpscr; ///< Floating point status control register.
     bool single_stepping;
+    u8 asid;
 };
 
 /**

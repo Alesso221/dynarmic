@@ -71,6 +71,10 @@ struct A32JitState {
     u32 Fpscr() const;
     void SetFpscr(u32 FPSCR);
 
+    u8 Asid() const;
+    void SetAsid(u8 ASID);
+    u8 MaxAsidAvailable() const;
+
     u64 GetUniqueHash() const noexcept {
         return (static_cast<u64>(upper_location_descriptor) << 32) | (static_cast<u64>(Reg[15]));
     }
