@@ -30,7 +30,7 @@ public:
     static constexpr u32 ASID_MASK = 0b11111;
     static constexpr u32 ASID_BIT_SHIFT = 3;
 
-    LocationDescriptor(u32 arm_pc, PSR cpsr, FPSCR fpscr, u8 asid, bool single_stepping = false)
+    LocationDescriptor(u32 arm_pc, PSR cpsr, FPSCR fpscr, u8 asid = 0, bool single_stepping = false)
         : arm_pc(arm_pc)
         , cpsr(cpsr.Value() & CPSR_MODE_MASK)
         , fpscr(fpscr.Value() & FPSCR_MODE_MASK)
@@ -59,7 +59,7 @@ public:
     bool SingleStepping() const { return single_stepping; }
 
     bool operator == (const LocationDescriptor& o) const {
-        return std::tie(arm_pc, cpsr, fpscr, single_stepping) == std::tie(o.arm_pc, o.cpsr, o.fpscr, single_stepping);
+        return std::tie(arm_pc, cpsr, fpscr, asid, single_stepping) == std::tie(o.arm_pc, o.cpsr, o.fpscr, o.asid, single_stepping);
     }
 
     bool operator != (const LocationDescriptor& o) const {
@@ -67,40 +67,40 @@ public:
     }
 
     LocationDescriptor SetPC(u32 new_arm_pc) const {
-        return LocationDescriptor(new_arm_pc, cpsr, fpscr, single_stepping);
+        return LocationDescriptor(new_arm_pc, cpsr, fpscr, asid, single_stepping);
     }
 
     LocationDescriptor AdvancePC(int amount) const {
-        return LocationDescriptor(static_cast<u32>(arm_pc + amount), cpsr, fpscr, single_stepping);
+        return LocationDescriptor(static_cast<u32>(arm_pc + amount), cpsr, fpscr, asid, single_stepping);
     }
 
     LocationDescriptor SetTFlag(bool new_tflag) const {
         PSR new_cpsr = cpsr;
         new_cpsr.T(new_tflag);
 
-        return LocationDescriptor(arm_pc, new_cpsr, fpscr, single_stepping);
+        return LocationDescriptor(arm_pc, new_cpsr, fpscr, asid, single_stepping);
     }
 
     LocationDescriptor SetEFlag(bool new_eflag) const {
         PSR new_cpsr = cpsr;
         new_cpsr.E(new_eflag);
 
-        return LocationDescriptor(arm_pc, new_cpsr, fpscr, single_stepping);
+        return LocationDescriptor(arm_pc, new_cpsr, fpscr, asid, single_stepping);
     }
 
     LocationDescriptor SetFPSCR(u32 new_fpscr) const {
-        return LocationDescriptor(arm_pc, cpsr, A32::FPSCR{new_fpscr & FPSCR_MODE_MASK}, single_stepping);
+        return LocationDescriptor(arm_pc, cpsr, A32::FPSCR{new_fpscr & FPSCR_MODE_MASK}, asid, single_stepping);
     }
 
     LocationDescriptor AdvanceIT() const {
         PSR new_cpsr = cpsr;
         new_cpsr.IT(new_cpsr.IT().Advance());
 
-        return LocationDescriptor(arm_pc, new_cpsr, fpscr, single_stepping);
+        return LocationDescriptor(arm_pc, new_cpsr, fpscr, asid, single_stepping);
     }
 
     LocationDescriptor SetSingleStepping(bool new_single_stepping) const {
-        return LocationDescriptor(arm_pc, cpsr, fpscr, new_single_stepping);
+        return LocationDescriptor(arm_pc, cpsr, fpscr, asid, new_single_stepping);
     }
 
     u64 UniqueHash() const noexcept {
