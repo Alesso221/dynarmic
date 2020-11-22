@@ -72,6 +72,8 @@ u32 A32JitState::Cpsr() const {
     return cpsr;
 }
 
+static constexpr u32 UPPER_LOCATION_DESCRIPTOR_CSPR_MASK = 0b11111111'00000011;
+
 void A32JitState::SetCpsr(u32 cpsr) {
     // NZCV flags
     cpsr_nzcv = NZCV::ToX64(cpsr);
@@ -84,7 +86,7 @@ void A32JitState::SetCpsr(u32 cpsr) {
     cpsr_ge |= Common::Bit<17>(cpsr) ? 0x0000FF00 : 0;
     cpsr_ge |= Common::Bit<16>(cpsr) ? 0x000000FF : 0;
 
-    upper_location_descriptor &= 0xFFFF0000;
+    upper_location_descriptor &= ~UPPER_LOCATION_DESCRIPTOR_CSPR_MASK;
     // E flag, T flag
     upper_location_descriptor |= Common::Bit<9>(cpsr) ? 2 : 0;
     upper_location_descriptor |= Common::Bit<5>(cpsr) ? 1 : 0;
@@ -210,6 +212,7 @@ u8 A32JitState::Asid() const {
 }
 
 void A32JitState::SetAsid(u8 ASID) {
+    upper_location_descriptor &= ~(ASID_MASK << ASID_BIT_SHIFT);
     upper_location_descriptor |= (ASID & ASID_MASK) << ASID_BIT_SHIFT;
 }
 
