@@ -208,7 +208,7 @@ constexpr u32 ASID_BIT_SHIFT = A32::LocationDescriptor::ASID_BIT_SHIFT;
 constexpr u32 ASID_BIT_COUNT = 5;
 
 u8 A32JitState::Asid() const {
-    return (upper_location_descriptor >> ASID_BIT_SHIFT) & ASID_MASK;
+    return static_cast<u8>((upper_location_descriptor >> ASID_BIT_SHIFT) & ASID_MASK);
 }
 
 void A32JitState::SetAsid(u8 ASID) {
@@ -217,7 +217,7 @@ void A32JitState::SetAsid(u8 ASID) {
 }
 
 u8 A32JitState::MaxAsidAvailable() const {
-    return (1 << ASID_BIT_COUNT);
+    return static_cast<u8>(1U << ASID_BIT_COUNT);
 }
 
 } // namespace Dynarmic::Backend::X64

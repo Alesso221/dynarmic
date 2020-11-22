@@ -45,7 +45,7 @@ public:
         fpscr = (o.Value() >> 32) & FPSCR_MODE_MASK;
         cpsr.IT(ITState{static_cast<u8>(o.Value() >> 40)});
         single_stepping = (o.Value() >> 32) & 4;
-        asid = ((o.Value() >> 32) >> ASID_BIT_SHIFT) & ASID_MASK;
+        asid = static_cast<u8>(((o.Value() >> 32) >> ASID_BIT_SHIFT) & ASID_MASK);
     }
 
     u32 PC() const { return arm_pc; }
