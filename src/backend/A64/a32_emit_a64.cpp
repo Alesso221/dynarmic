@@ -13,6 +13,7 @@
 #include <fmt/ostream.h>
 
 #include <dynarmic/A32/coprocessor.h>
+#include <dynarmic/exclusive_monitor.h>
 
 #include "backend/A64/a32_emit_a64.h"
 #include "backend/A64/a32_jitstate.h"
@@ -184,7 +185,7 @@ void A32EmitA64::EmitCondPrelude(const A32EmitContext& ctx) {
 }
 
 void A32EmitA64::ClearFastDispatchTable() {
-    if (config.enable_fast_dispatch) {
+    if (config.HasOptimization(OptimizationFlag::FastDispatch)) {
         fast_dispatch_table.fill({});
     }
 }
@@ -313,7 +314,7 @@ void A32EmitA64::GenTerminalHandlers() {
     code.ADD(code.ABI_SCRATCH1, X28, code.ABI_SCRATCH1, ArithOption{code.ABI_SCRATCH1, ST_LSL, 3});
     code.LDR(INDEX_UNSIGNED, X8, code.ABI_SCRATCH1, offsetof(A32JitState, rsb_location_descriptors));
     code.CMP(location_descriptor_reg, X8);
-    if (config.enable_fast_dispatch) {
+    if (config.HasOptimization(OptimizationFlag::FastDispatch)) {
         rsb_cache_miss = code.B(CC_NEQ);
     } else {
         code.B(CC_NEQ, code.GetReturnFromRunCodeAddress());
@@ -322,7 +323,7 @@ void A32EmitA64::GenTerminalHandlers() {
     code.BR(code.ABI_SCRATCH1);
     PerfMapRegister(terminal_handler_pop_rsb_hint, code.GetCodePtr(), "a32_terminal_handler_pop_rsb_hint");
 
-    if (config.enable_fast_dispatch) {
+    if (config.HasOptimization(OptimizationFlag::FastDispatch)) {
         terminal_handler_fast_dispatch_hint = code.AlignCode16();
         calculate_location_descriptor();
         code.SetJumpTarget(rsb_cache_miss);
@@ -807,17 +808,6 @@ void A32EmitA64::EmitA32ClearExclusive(A32EmitContext&, IR::Inst*) {
     code.STR(INDEX_UNSIGNED, WZR, X28, offsetof(A32JitState, exclusive_state));
 }
 
-void A32EmitA64::EmitA32SetExclusive(A32EmitContext& ctx, IR::Inst* inst) {
-    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
-    ASSERT(args[1].IsImmediate());
-    Arm64Gen::ARM64Reg address = DecodeReg(ctx.reg_alloc.UseGpr(args[0]));
-    Arm64Gen::ARM64Reg state = DecodeReg(ctx.reg_alloc.ScratchGpr());
-
-    code.MOVI2R(state, u8(1));
-    code.STR(INDEX_UNSIGNED, state, X28, offsetof(A32JitState, exclusive_state));
-    code.STR(INDEX_UNSIGNED, address, X28, offsetof(A32JitState, exclusive_address));
-}
-
 A32EmitA64::DoNotFastmemMarker A32EmitA64::GenerateDoNotFastmemMarker(A32EmitContext& ctx, IR::Inst* inst) {
     return std::make_tuple(ctx.Location(), ctx.GetInstOffset(inst));
 }
@@ -1080,56 +1070,91 @@ void A32EmitA64::EmitA32WriteMemory64(A32EmitContext& ctx, IR::Inst* inst) {
     WriteMemory<u64>(ctx, inst, write_memory_64);
 }
 
-template <typename T, void (A32::UserCallbacks::*fn)(A32::VAddr, T)>
+template <typename T, T (A32::UserCallbacks::*fn)(A32::VAddr)>
+void ExclusiveRead(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const A32::UserConfig& config) {
+    ASSERT(config.global_monitor != nullptr);
+    auto args = reg_alloc.GetArgumentInfo(inst);
+
+    reg_alloc.HostCall(inst, {}, args[0]);
+
+    code.MOVI2R(code.ABI_PARAM1, 1);
+    code.STR(INDEX_UNSIGNED, WZR, X28, offsetof(A32JitState, exclusive_state));
+    code.MOVI2R(code.ABI_PARAM1, reinterpret_cast<u64>(&config));
+
+    code.QuickCallLambda(
+        [](A32::UserConfig& conf, u32 vaddr) -> T {
+            return conf.global_monitor->ReadAndMark<T>(conf.processor_id, vaddr, [&]() -> T {
+                return (conf.callbacks->*fn)(vaddr);
+            });
+        }
+    );
+}
+
+template <typename T, bool (A32::UserCallbacks::*fn)(A32::VAddr, T, T)>
 static void ExclusiveWrite(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const A32::UserConfig& config, bool prepend_high_word) {
+    ASSERT(config.global_monitor != nullptr);
     auto args = reg_alloc.GetArgumentInfo(inst);
     if (prepend_high_word) {
         reg_alloc.HostCall(nullptr, {}, args[0], args[1], args[2]);
     } else {
         reg_alloc.HostCall(nullptr, {}, args[0], args[1]);
     }
-    // Use unused HostCall registers
-    ARM64Reg passed = W9;
-    ARM64Reg tmp = W10;
 
     std::vector<FixupBranch> end;
 
-    code.MOVI2R(passed, u32(1));
-    code.LDR(INDEX_UNSIGNED, tmp, X28, offsetof(A32JitState, exclusive_state));
-    end.push_back(code.CBZ(tmp));
-    code.LDR(INDEX_UNSIGNED, tmp, X28, offsetof(A32JitState, exclusive_address));
-    code.EOR(tmp, code.ABI_PARAM2, tmp);
-    code.TSTI2R(tmp, A32JitState::RESERVATION_GRANULE_MASK, reg_alloc.ScratchGpr());
-    end.push_back(code.B(CC_NEQ));
+    code.LDR(INDEX_UNSIGNED, code.ABI_RETURN, X28, offsetof(A32JitState, exclusive_state));
+    end.push_back(code.CBZ(code.ABI_RETURN));
     code.STR(INDEX_UNSIGNED, WZR, X28, offsetof(A32JitState, exclusive_state));
     if (prepend_high_word) {
         code.LSL(code.ABI_PARAM4,code.ABI_PARAM4, 32);
         code.ORR(code.ABI_PARAM3, code.ABI_PARAM3, code.ABI_PARAM4);
     }
-    Devirtualize<fn>(config.callbacks).EmitCall(code);
-    code.MOVI2R(passed, 0);
 
-   for (FixupBranch e : end) {
+    code.MOVI2R(code.ABI_PARAM1, reinterpret_cast<u64>(&config));
+    code.QuickCallLambda(
+        [](A32::UserConfig& conf, u32 vaddr, T value) -> u32 {
+            return conf.global_monitor->DoExclusiveOperation<T>(conf.processor_id, vaddr,
+                [&](T expected) -> bool {
+                    return (conf.callbacks->*fn)(vaddr, value, expected);
+                }) ? 0 : 1;
+        }
+    );
+
+    for (FixupBranch e : end) {
         code.SetJumpTarget(e);
-   }   
+    }
+}
 
-    reg_alloc.DefineValue(inst, passed);
+void A32EmitA64::EmitA32ExclusiveReadMemory8(A32EmitContext& ctx, IR::Inst* inst) {
+    ExclusiveRead<u8, &A32::UserCallbacks::MemoryRead8>(code, ctx.reg_alloc, inst, config);
+}
+
+void A32EmitA64::EmitA32ExclusiveReadMemory16(A32EmitContext& ctx, IR::Inst* inst) {
+    ExclusiveRead<u16, &A32::UserCallbacks::MemoryRead16>(code, ctx.reg_alloc, inst, config);
+}
+
+void A32EmitA64::EmitA32ExclusiveReadMemory32(A32EmitContext& ctx, IR::Inst* inst) {
+    ExclusiveRead<u32, &A32::UserCallbacks::MemoryRead32>(code, ctx.reg_alloc, inst, config);
+}
+
+void A32EmitA64::EmitA32ExclusiveReadMemory64(A32EmitContext& ctx, IR::Inst* inst) {
+    ExclusiveRead<u64, &A32::UserCallbacks::MemoryRead64>(code, ctx.reg_alloc, inst, config);
 }
 
 void A32EmitA64::EmitA32ExclusiveWriteMemory8(A32EmitContext& ctx, IR::Inst* inst) {
-    ExclusiveWrite<u8, &A32::UserCallbacks::MemoryWrite8>(code, ctx.reg_alloc, inst, config, false);
+    ExclusiveWrite<u8, &A32::UserCallbacks::MemoryWriteExclusive8>(code, ctx.reg_alloc, inst, config, false);
 }
 
 void A32EmitA64::EmitA32ExclusiveWriteMemory16(A32EmitContext& ctx, IR::Inst* inst) {
-    ExclusiveWrite<u16, &A32::UserCallbacks::MemoryWrite16>(code, ctx.reg_alloc, inst, config, false);
+    ExclusiveWrite<u16, &A32::UserCallbacks::MemoryWriteExclusive16>(code, ctx.reg_alloc, inst, config, false);
 }
 
 void A32EmitA64::EmitA32ExclusiveWriteMemory32(A32EmitContext& ctx, IR::Inst* inst) {
-    ExclusiveWrite<u32, &A32::UserCallbacks::MemoryWrite32>(code, ctx.reg_alloc, inst, config, false);
+    ExclusiveWrite<u32, &A32::UserCallbacks::MemoryWriteExclusive32>(code, ctx.reg_alloc, inst, config, false);
 }
 
 void A32EmitA64::EmitA32ExclusiveWriteMemory64(A32EmitContext& ctx, IR::Inst* inst) {
-    ExclusiveWrite<u64, &A32::UserCallbacks::MemoryWrite64>(code, ctx.reg_alloc, inst, config, true);
+    ExclusiveWrite<u64, &A32::UserCallbacks::MemoryWriteExclusive64>(code, ctx.reg_alloc, inst, config, true);
 }
 
 static void EmitCoprocessorException() {
@@ -1450,7 +1475,7 @@ void A32EmitA64::EmitSetUpperLocationDescriptor(IR::LocationDescriptor new_locat
 void A32EmitA64::EmitTerminalImpl(IR::Term::LinkBlock terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
     EmitSetUpperLocationDescriptor(terminal.next, initial_location);
 
-    if (!config.enable_optimizations || is_single_step) {
+    if (!config.HasOptimization(OptimizationFlag::BlockLinking) || is_single_step) {
         code.MOVI2R(DecodeReg(code.ABI_SCRATCH1), A32::LocationDescriptor{terminal.next}.PC());
         code.STR(INDEX_UNSIGNED, DecodeReg(code.ABI_SCRATCH1), X28, MJitStateReg(A32::Reg::PC));
         code.ReturnFromRunCode();
@@ -1484,7 +1509,7 @@ void A32EmitA64::EmitTerminalImpl(IR::Term::LinkBlock terminal, IR::LocationDesc
 void A32EmitA64::EmitTerminalImpl(IR::Term::LinkBlockFast terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
     EmitSetUpperLocationDescriptor(terminal.next, initial_location);
     
-    if (!config.enable_optimizations || is_single_step) {
+    if (!config.HasOptimization(OptimizationFlag::BlockLinking) || is_single_step) {
         code.MOVI2R(DecodeReg(code.ABI_SCRATCH1), A32::LocationDescriptor{terminal.next}.PC());
         code.STR(INDEX_UNSIGNED, DecodeReg(code.ABI_SCRATCH1), X28, MJitStateReg(A32::Reg::PC));
         code.ReturnFromRunCode();
@@ -1500,7 +1525,7 @@ void A32EmitA64::EmitTerminalImpl(IR::Term::LinkBlockFast terminal, IR::Location
 }
 
 void A32EmitA64::EmitTerminalImpl(IR::Term::PopRSBHint, IR::LocationDescriptor, bool is_single_step) {
-    if (!config.enable_optimizations || is_single_step) {
+    if (!config.HasOptimization(OptimizationFlag::ReturnStackBuffer) || is_single_step) {
         code.ReturnFromRunCode();
         return;
     }
@@ -1508,11 +1533,12 @@ void A32EmitA64::EmitTerminalImpl(IR::Term::PopRSBHint, IR::LocationDescriptor, 
 }
 
 void A32EmitA64::EmitTerminalImpl(IR::Term::FastDispatchHint, IR::LocationDescriptor, bool is_single_step) {
-    if (config.enable_fast_dispatch && !is_single_step) {
-        code.B(terminal_handler_fast_dispatch_hint);
-    } else {
+    if (!config.HasOptimization(OptimizationFlag::FastDispatch) || is_single_step) {
         code.ReturnFromRunCode();
+        return;
     }
+
+    code.B(terminal_handler_fast_dispatch_hint);
 }
 
 void A32EmitA64::EmitTerminalImpl(IR::Term::If terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
@@ -1589,7 +1615,7 @@ void A32EmitA64::EmitPatchMovX0(CodePtr target_code_ptr) {
 
 void A32EmitA64::Unpatch(const IR::LocationDescriptor& location) {
     EmitA64::Unpatch(location);
-    if (config.enable_fast_dispatch) {
+    if (config.HasOptimization(OptimizationFlag::FastDispatch)) {
         (*fast_dispatch_table_lookup)(location.Value()) = {};
     }
 }

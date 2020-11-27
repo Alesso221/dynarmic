@@ -14,6 +14,7 @@
 #include "backend/A64/constant_pool.h"
 #include "backend/A64/jitstate_info.h"
 #include "backend/A64/emitter/a64_emitter.h"
+#include "common/cast_util.h"
 #include "common/common_types.h"
 
 namespace Dynarmic::BackendA64 {
@@ -95,6 +96,11 @@ public:
 
     void SetCodePtr(CodePtr code_ptr);
     void EnsurePatchLocationSize(CodePtr begin, size_t size);
+    
+    template <typename Lambda>
+    void QuickCallLambda(Lambda l) {
+        QuickCallFunction(Common::FptrCast(l));
+    }
 
     Arm64Gen::ARM64FloatEmitter fp_emitter;
 

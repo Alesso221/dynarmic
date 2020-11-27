@@ -54,9 +54,7 @@ struct A32JitState {
     bool check_bit = false;
 
     // Exclusive state
-    static constexpr u32 RESERVATION_GRANULE_MASK = 0xFFFFFFF8;
     u32 exclusive_state = 0;
-    u32 exclusive_address = 0;
 
     static constexpr size_t RSBSize = 8; // MUST be a power of 2.
     static constexpr size_t RSBPtrMask = RSBSize - 1;
@@ -70,6 +68,10 @@ struct A32JitState {
     u32 fpsr_nzcv = 0;
     u32 Fpscr() const;
     void SetFpscr(u32 FPSCR);
+
+    u8 Asid() const;
+    void SetAsid(u8 ASID);
+    u8 MaxAsidAvailable() const;
 
     u64 GetUniqueHash() const noexcept {
         return (static_cast<u64>(upper_location_descriptor) << 32) | (static_cast<u64>(Reg[15]));
@@ -90,7 +92,6 @@ struct A32JitState {
         fpsr_nzcv = src.fpsr_nzcv;
 
         exclusive_state = 0;
-        exclusive_address = 0;
 
         if (reset_rsb) {
             ResetRSB();

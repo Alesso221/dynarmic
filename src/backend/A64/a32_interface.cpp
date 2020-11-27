@@ -155,9 +155,11 @@ private:
         }
 
         IR::Block ir_block = A32::Translate(A32::LocationDescriptor{descriptor}, [this](u32 vaddr) { return config.callbacks->MemoryReadCode(vaddr); }, {config.define_unpredictable_behaviour, config.hook_hint_instructions});
-        if (config.enable_optimizations) {
+        if (config.HasOptimization(OptimizationFlag::GetSetElimination)) {
             Optimization::A32GetSetElimination(ir_block);
             Optimization::DeadCodeElimination(ir_block);
+        }
+        if (config.HasOptimization(OptimizationFlag::ConstProp)) {
             Optimization::A32ConstantMemoryReads(ir_block, config.callbacks);
             Optimization::ConstantPropagation(ir_block);
             Optimization::DeadCodeElimination(ir_block);
@@ -246,6 +248,18 @@ void Jit::SetFpscr(u32 value) {
     return impl->jit_state.SetFpscr(value);
 }
 
+std::uint8_t Jit::Asid() const {
+    return impl->jit_state.Asid();
+}
+
+void Jit::SetAsid(std::uint8_t value) {
+    impl->jit_state.SetAsid(value);
+}
+
+std::uint8_t Jit::MaxAsidAvailable() const {
+    return impl->jit_state.MaxAsidAvailable();
+}
+
 Context Jit::SaveContext() const {
     Context ctx;
     SaveContext(ctx);
@@ -307,8 +321,8 @@ void Jit::LoadContext(const Context& ctx) {
     impl->jit_state.TransferJitState(ctx.impl->jit_state, reset_rsb);
 }
 
-std::string Jit::Disassemble(const IR::LocationDescriptor& descriptor) {
-    return impl->Disassemble(descriptor);
+std::string Jit::Disassemble() const {
+    return "Not supported!";
 }
 
 } // namespace Dynarmic::A32
