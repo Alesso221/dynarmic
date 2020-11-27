@@ -81,8 +81,12 @@ u32 GenRandomInst(u32 pc, bool is_last_inst) {
     } instructions = []{
         const std::vector<std::tuple<std::string, const char*>> list {
 #define INST(fn, name, bitstring) {#fn, bitstring},
+#ifdef ARCHITECTURE_Aarch64
+#include "frontend/A32/decoder/arm_a64.inc"
+#else
 #include "frontend/A32/decoder/arm.inc"
 #include "frontend/A32/decoder/asimd.inc"
+#endif
 #include "frontend/A32/decoder/vfp.inc"
 #undef INST
         };

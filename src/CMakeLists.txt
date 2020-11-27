@@ -160,6 +160,7 @@ if ("A32" IN_LIST DYNARMIC_FRONTENDS)
         frontend/A32/translate/translate_thumb.cpp
         ir_opt/a32_constant_memory_reads_pass.cpp
         ir_opt/a32_get_set_elimination_pass.cpp
+        ir_opt/a32_merge_interpret_blocks.cpp
     )
 endif()
 
@@ -329,6 +330,66 @@ if (ARCHITECTURE_x86_64)
     else()
         target_sources(dynarmic PRIVATE backend/x64/exception_handler_generic.cpp)
     endif()
+elseif(ARCHITECTURE_Aarch64)
+    target_sources(dynarmic PRIVATE
+         backend/A64/emitter/a64_emitter.cpp
+         backend/A64/emitter/a64_emitter.h
+         backend/A64/emitter/arm_common.h
+         backend/A64/emitter/code_block.h
+         # backend/A64/a64_emit_a64.cpp
+         # backend/A64/a64_emit_a64.h
+         # backend/A64/a64_exclusive_monitor.cpp
+         # backend/A64/a64_interface.cpp
+         # backend/A64/a64_jitstate.cpp
+         # backend/A64/a64_jitstate.h
+         backend/A64/abi.cpp
+         backend/A64/abi.h
+         backend/A64/block_of_code.cpp
+         backend/A64/block_of_code.h
+         backend/A64/block_range_information.cpp
+         backend/A64/block_range_information.h
+         backend/A64/callback.cpp
+         backend/A64/callback.h
+         backend/A64/constant_pool.cpp
+         backend/A64/constant_pool.h
+         backend/A64/devirtualize.h
+         backend/A64/emit_a64.cpp
+         backend/A64/emit_a64.h
+         # backend/A64/emit_a64_aes.cpp
+         # backend/A64/emit_a64_crc32.cpp
+         backend/A64/emit_a64_data_processing.cpp
+         backend/A64/emit_a64_floating_point.cpp
+         backend/A64/emit_a64_packed.cpp
+         backend/A64/emit_a64_saturation.cpp
+         # backend/A64/emit_a64_sm4.cpp
+         # backend/A64/emit_a64_vector.cpp
+         # backend/A64/emit_a64_vector_floating_point.cpp         
+         backend/A64/exception_handler.h
+         backend/A64/hostloc.cpp
+         backend/A64/hostloc.h
+         backend/A64/jitstate_info.h
+         backend/A64/opcodes.inc
+         backend/A64/perf_map.cpp
+         backend/A64/perf_map.h
+         backend/A64/reg_alloc.cpp
+         backend/A64/reg_alloc.h
+    )
+    
+    if ("A32" IN_LIST DYNARMIC_FRONTENDS)
+        target_sources(dynarmic PRIVATE
+            backend/A64/a32_emit_a64.cpp
+            backend/A64/a32_emit_a64.h
+            backend/A64/a32_interface.cpp
+            backend/A64/a32_jitstate.cpp
+            backend/A64/a32_jitstate.h
+        )
+    endif()
+    
+    if (UNIX)
+        target_sources(dynarmic PRIVATE backend/A64/exception_handler_posix.cpp)
+    else()
+        target_sources(dynarmic PRIVATE backend/A64/exception_handler_generic.cpp)
+    endif()
 else()
     message(FATAL_ERROR "Unsupported architecture")
 endif()
@@ -349,6 +410,10 @@ target_link_libraries(dynarmic
         xbyak
         $<$<BOOL:DYNARMIC_USE_LLVM>:${llvm_libs}>
 )
+
+if(ANDROID)
+    target_link_libraries(dynarmic PRIVATE log)
+endif()
 if (DYNARMIC_ENABLE_CPU_FEATURE_DETECTION)
     target_compile_definitions(dynarmic PRIVATE DYNARMIC_ENABLE_CPU_FEATURE_DETECTION=1)
 endif()

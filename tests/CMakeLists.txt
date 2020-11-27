@@ -19,20 +19,35 @@ add_executable(dynarmic_tests
     rand_int.h
 )
 
+if (ARCHITECTURE_x86_64)
+    target_sources(dynarmic_tests PRIVATE
+        A64/a64.cpp
+        A64/testenv.h
+        cpu_info.cpp
+    )
+endif()
+
 if (DYNARMIC_TESTS_USE_UNICORN)
     target_sources(dynarmic_tests PRIVATE
         A32/fuzz_arm.cpp
         A32/fuzz_thumb.cpp
-        A64/fuzz_with_unicorn.cpp
-        A64/misaligned_page_table.cpp
-        A64/verify_unicorn.cpp
+        #A64/fuzz_with_unicorn.cpp
+        #A64/verify_unicorn.cpp
         fuzz_util.cpp
         fuzz_util.h
         unicorn_emu/a32_unicorn.cpp
         unicorn_emu/a32_unicorn.h
-        unicorn_emu/a64_unicorn.cpp
-        unicorn_emu/a64_unicorn.h
+        #unicorn_emu/a64_unicorn.cpp
+        #unicorn_emu/a64_unicorn.h
     )
+    if (ARCHITECTURE_x86_64)
+        target_sources(dynarmic_tests PRIVATE
+            A64/fuzz_with_unicorn.cpp
+            A64/verify_unicorn.cpp
+            unicorn_emu/a64_unicorn.cpp
+            unicorn_emu/a64_unicorn.h
+        )
+    endif()
     target_link_libraries(dynarmic_tests PRIVATE Unicorn::Unicorn)
 endif()
 
@@ -44,10 +59,16 @@ include(CreateDirectoryGroups)
 create_target_directory_groups(dynarmic_tests)
 create_target_directory_groups(dynarmic_print_info)
 
-target_link_libraries(dynarmic_tests PRIVATE dynarmic boost catch fmt mp xbyak)
+target_link_libraries(dynarmic_tests PRIVATE dynarmic boost catch fmt mp)
+
+if (ARCHITECTURE_x86_64)
+    target_link_libraries(dynarmic_tests PRIVATE xbyak)
+endif()
+
 target_include_directories(dynarmic_tests PRIVATE . ../src)
 target_compile_options(dynarmic_tests PRIVATE ${DYNARMIC_CXX_FLAGS})
 target_compile_definitions(dynarmic_tests PRIVATE FMT_USE_USER_DEFINED_LITERALS=0)
+target_compile_options(dynarmic_tests PRIVATE -DCATCH_CONFIG_NO_WINDOWS_SEH -DCATCH_CONFIG_NO_POSIX_SIGNALS)
 
 target_link_libraries(dynarmic_print_info PRIVATE dynarmic boost catch fmt mp)
 target_include_directories(dynarmic_print_info PRIVATE . ../src)
