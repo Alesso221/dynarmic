@@ -1078,7 +1078,7 @@ void ExclusiveRead(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const
     reg_alloc.HostCall(inst, {}, args[0]);
 
     code.MOVI2R(code.ABI_PARAM1, 1);
-    code.STR(INDEX_UNSIGNED, WZR, X28, offsetof(A32JitState, exclusive_state));
+    code.STR(INDEX_UNSIGNED, code.ABI_PARAM1, X28, offsetof(A32JitState, exclusive_state));
     code.MOVI2R(code.ABI_PARAM1, reinterpret_cast<u64>(&config));
 
     code.QuickCallLambda(
@@ -1094,21 +1094,14 @@ template <typename T, bool (A32::UserCallbacks::*fn)(A32::VAddr, T, T)>
 static void ExclusiveWrite(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const A32::UserConfig& config, bool prepend_high_word) {
     ASSERT(config.global_monitor != nullptr);
     auto args = reg_alloc.GetArgumentInfo(inst);
-    if (prepend_high_word) {
-        reg_alloc.HostCall(nullptr, {}, args[0], args[1], args[2]);
-    } else {
-        reg_alloc.HostCall(nullptr, {}, args[0], args[1]);
-    }
+    
+    reg_alloc.HostCall(nullptr, {}, args[0], args[1]);
 
     std::vector<FixupBranch> end;
 
     code.LDR(INDEX_UNSIGNED, code.ABI_RETURN, X28, offsetof(A32JitState, exclusive_state));
     end.push_back(code.CBZ(code.ABI_RETURN));
     code.STR(INDEX_UNSIGNED, WZR, X28, offsetof(A32JitState, exclusive_state));
-    if (prepend_high_word) {
-        code.LSL(code.ABI_PARAM4,code.ABI_PARAM4, 32);
-        code.ORR(code.ABI_PARAM3, code.ABI_PARAM3, code.ABI_PARAM4);
-    }
 
     code.MOVI2R(code.ABI_PARAM1, reinterpret_cast<u64>(&config));
     code.QuickCallLambda(
