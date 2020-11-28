@@ -426,6 +426,7 @@ TEST_CASE("arm: Test stepping 3", "[arm]") {
     REQUIRE(jit.Cpsr() == 0x000001d0);
 }
 
+/*
 TEST_CASE("arm: PackedAbsDiffSumS8", "[arm][A32]") {
     // This was a randomized test-case that was failing.
     // In circumstances there were cases when the upper 32 bits of an argument to psadbw were not zero.
@@ -465,6 +466,7 @@ TEST_CASE("arm: PackedAbsDiffSumS8", "[arm][A32]") {
     REQUIRE(jit.Regs()[15] == 0x00000008);
     REQUIRE(jit.Cpsr() == 0xb0000010);
 }
+*/
 
 TEST_CASE("arm: vclt.f32 with zero", "[arm][A32]") {
     ArmTestEnv test_env;
