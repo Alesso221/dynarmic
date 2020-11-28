@@ -1091,7 +1091,7 @@ void ExclusiveRead(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const
 }
 
 template <typename T, bool (A32::UserCallbacks::*fn)(A32::VAddr, T, T)>
-static void ExclusiveWrite(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const A32::UserConfig& config, bool prepend_high_word) {
+static void ExclusiveWrite(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* inst, const A32::UserConfig& config) {
     ASSERT(config.global_monitor != nullptr);
     auto args = reg_alloc.GetArgumentInfo(inst);
     
@@ -1135,19 +1135,19 @@ void A32EmitA64::EmitA32ExclusiveReadMemory64(A32EmitContext& ctx, IR::Inst* ins
 }
 
 void A32EmitA64::EmitA32ExclusiveWriteMemory8(A32EmitContext& ctx, IR::Inst* inst) {
-    ExclusiveWrite<u8, &A32::UserCallbacks::MemoryWriteExclusive8>(code, ctx.reg_alloc, inst, config, false);
+    ExclusiveWrite<u8, &A32::UserCallbacks::MemoryWriteExclusive8>(code, ctx.reg_alloc, inst, config);
 }
 
 void A32EmitA64::EmitA32ExclusiveWriteMemory16(A32EmitContext& ctx, IR::Inst* inst) {
-    ExclusiveWrite<u16, &A32::UserCallbacks::MemoryWriteExclusive16>(code, ctx.reg_alloc, inst, config, false);
+    ExclusiveWrite<u16, &A32::UserCallbacks::MemoryWriteExclusive16>(code, ctx.reg_alloc, inst, config);
 }
 
 void A32EmitA64::EmitA32ExclusiveWriteMemory32(A32EmitContext& ctx, IR::Inst* inst) {
-    ExclusiveWrite<u32, &A32::UserCallbacks::MemoryWriteExclusive32>(code, ctx.reg_alloc, inst, config, false);
+    ExclusiveWrite<u32, &A32::UserCallbacks::MemoryWriteExclusive32>(code, ctx.reg_alloc, inst, config);
 }
 
 void A32EmitA64::EmitA32ExclusiveWriteMemory64(A32EmitContext& ctx, IR::Inst* inst) {
-    ExclusiveWrite<u64, &A32::UserCallbacks::MemoryWriteExclusive64>(code, ctx.reg_alloc, inst, config, true);
+    ExclusiveWrite<u64, &A32::UserCallbacks::MemoryWriteExclusive64>(code, ctx.reg_alloc, inst, config);
 }
 
 static void EmitCoprocessorException() {
