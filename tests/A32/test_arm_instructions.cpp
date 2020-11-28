@@ -468,6 +468,7 @@ TEST_CASE("arm: PackedAbsDiffSumS8", "[arm][A32]") {
 }
 */
 
+/*
 TEST_CASE("arm: vclt.f32 with zero", "[arm][A32]") {
     ArmTestEnv test_env;
     A32::Jit jit{GetUserConfig(&test_env)};
@@ -507,6 +508,7 @@ TEST_CASE("arm: vcvt.s16.f64", "[arm][A32]") {
     REQUIRE(jit.ExtRegs()[16] == 0xffff8000);
     REQUIRE(jit.ExtRegs()[17] == 0xffffffff);
 }
+*/
 
 TEST_CASE("arm: Cleared Q flag", "[arm][A32][JitA64]") {
     ArmTestEnv test_env;
