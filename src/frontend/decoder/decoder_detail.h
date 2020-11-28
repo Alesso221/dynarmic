@@ -69,8 +69,6 @@ private:
         char ch = 0;
 
         for (size_t i = 0; i < opcode_bitsize; i++) {
-            const size_t bit_position = opcode_bitsize - i - 1;
-
             if (bitstring[i] == '0' || bitstring[i] == '1' || bitstring[i] == '-') {
                 if (ch != 0) {
                     ch = 0;
@@ -88,6 +86,7 @@ private:
                     ASSERT(arg_index < N);
 
                     const auto one = static_cast<opcode_type>(1);
+                    const size_t bit_position = opcode_bitsize - i - 1;
 
                     masks[arg_index] |= one << bit_position;
                     shifts[arg_index] = bit_position;
