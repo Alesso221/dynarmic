@@ -1095,7 +1095,7 @@ static void ExclusiveWrite(BlockOfCode& code, RegAlloc& reg_alloc, IR::Inst* ins
     ASSERT(config.global_monitor != nullptr);
     auto args = reg_alloc.GetArgumentInfo(inst);
     
-    reg_alloc.HostCall(nullptr, {}, args[0], args[1]);
+    reg_alloc.HostCall(inst, {}, args[0], args[1]);
 
     std::vector<FixupBranch> end;
 
