@@ -96,7 +96,7 @@ A32EmitX64::BlockDescriptor A32EmitX64::Emit(IR::Block& block) {
     code.EnableWriting();
     SCOPE_EXIT { code.DisableWriting(); };
 
-    static const std::vector<HostLoc> gpr_order = [this]{
+    const std::vector<HostLoc> gpr_order = [this]{
         std::vector<HostLoc> gprs{any_gpr};
         if (conf.page_table || conf.tlb_entries) {
             gprs.erase(std::find(gprs.begin(), gprs.end(), HostLoc::R14));
