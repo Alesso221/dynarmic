@@ -822,27 +822,6 @@ void A32EmitA64::DoNotFastmem(const DoNotFastmemMarker& marker) {
 }
 
 template<std::size_t bitsize>
-void EmitReadMemoryLdr(BlockOfCode& code, const ARM64Reg &dest, const ARM64Reg base, const ARM64Reg add) {
-    switch (bitsize) {
-        case 8:
-            code.LDRB(DecodeReg(dest), base, add);
-            break;
-        case 16:
-            code.LDRH(DecodeReg(dest), base, add);
-            break;
-        case 32:
-            code.LDR(DecodeReg(dest), base, add);
-            break;
-        case 64:
-            code.LDR(dest, base, add);
-            break;
-        default:
-            ASSERT_FALSE("Invalid bit_size");
-            break;
-    }
-}
-
-template<std::size_t bitsize>
 void EmitReadMemoryLdr(BlockOfCode& code, const ARM64Reg dest, const ARM64Reg base, const ARM64Reg add) {
     switch (bitsize) {
         case 8:
@@ -865,7 +844,7 @@ void EmitReadMemoryLdr(BlockOfCode& code, const ARM64Reg dest, const ARM64Reg ba
 
 template<std::size_t bitsize>
 void EmitWriteMemoryStr(BlockOfCode& code, const ARM64Reg value, const ARM64Reg base, const ARM64Reg add) {
-    switch (bit_size) {
+    switch (bitsize) {
         case 8:
             code.STRB(DecodeReg(value), base, add);
             break;
@@ -884,8 +863,9 @@ void EmitWriteMemoryStr(BlockOfCode& code, const ARM64Reg value, const ARM64Reg 
     }
 }
 
-std::pair<ARM64Reg, ARM64Reg> EmitVAddrLookup(BlockOfCode& code, A32EmitContext& ctx, Dynarmic::A32::Config &config,
+std::pair<ARM64Reg, ARM64Reg> EmitVAddrLookup(BlockOfCode& code, A32EmitContext& ctx, const A32::UserConfig &config,
     size_t bitsize, FixupBranch& abort, ARM64Reg vaddr) {
+    ARM64Reg result = ctx.reg_alloc.ScratchGpr();
     ARM64Reg tmp = code.ABI_RETURN;
 
     code.MOVP2R(result, config.page_table);
@@ -898,8 +878,8 @@ std::pair<ARM64Reg, ARM64Reg> EmitVAddrLookup(BlockOfCode& code, A32EmitContext&
     return std::make_pair(result, vaddr);
 }
 
-std::pair<ARM64Reg, ARM64Reg> EmitTLBLookup(BlockOfCode& code, A32EmitContext& ctx, Dynarmic::A32::Config &config,
-    size_t bitsize, FixupBranch& abort, ARM64Reg vaddr) {
+std::pair<ARM64Reg, ARM64Reg> EmitTLBLookup(BlockOfCode& code, A32EmitContext& ctx, const A32::UserConfig &config,
+    size_t bitsize, FixupBranch& abort, ARM64Reg vaddr, MemoryPermission access_type) {
     std::size_t check_offset = 0;
 
     // Access to lower word....
@@ -921,6 +901,8 @@ std::pair<ARM64Reg, ARM64Reg> EmitTLBLookup(BlockOfCode& code, A32EmitContext& c
         break;
     }
 
+    ARM64Reg result = ctx.reg_alloc.ScratchGpr();
+
     ARM64Reg tmp = code.ABI_RETURN;
     ARM64Reg tmp2 = ctx.reg_alloc.ScratchGpr();
     ARM64Reg offset = ctx.reg_alloc.ScratchGpr();
@@ -932,17 +914,17 @@ std::pair<ARM64Reg, ARM64Reg> EmitTLBLookup(BlockOfCode& code, A32EmitContext& c
     code.MOV(tmp2, tmp);
 
     // Calculate offset to the TLB entry
-    code.ANDI2R(tmp, 0b111111111);
-    code.LSL(offset, tmp, 5);
+    code.ANDI2R(offset, tmp, 0b111111111);
+    code.LSL(offset, offset, 5);
     code.ADD(offset, result, offset);
 
-    code.LDR(tmp_32, offset, check_offset);
-    code.SHR(tmp_32, tmp_32, 12);
+    code.LDR(INDEX_UNSIGNED, tmp_32, offset, check_offset);
+    code.LSR(tmp_32, tmp_32, 12);
 
     code.CMP(DecodeReg(tmp2), tmp_32);
     abort = code.B(CC_NEQ);
 
-    code.LDR(result, offset, offsetof(TLBEntry, host_base));
+    code.LDR(INDEX_UNSIGNED, result, offset, offsetof(TLBEntry, host_base));
     code.ANDI2R(vaddr, vaddr, 4095);
 
     return std::make_pair(result, vaddr);
@@ -956,7 +938,6 @@ void A32EmitA64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr c
     ctx.reg_alloc.UseScratch(args[0], ABI_PARAM2);
     ctx.reg_alloc.ScratchGpr({ABI_RETURN});
 
-    ARM64Reg result = ctx.reg_alloc.ScratchGpr();
     ARM64Reg vaddr = DecodeReg(code.ABI_PARAM2);
     ARM64Reg tmp = code.ABI_RETURN;
 
@@ -964,12 +945,14 @@ void A32EmitA64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr c
 
     if (ShouldFastmem(do_not_fastmem_marker)) {
         const CodePtr patch_location = code.GetCodePtr();
+        ARM64Reg result = ctx.reg_alloc.ScratchGpr();
+
         EmitReadMemoryLdr<bit_size>(code, result, X27, vaddr);
 
         fastmem_patch_info.emplace(
                 patch_location,
                 FastmemPatchInfo{
-                        [this, patch_location, page_table_lookup, callback_fn, result, do_not_fastmem_marker]{
+                        [this, patch_location, callback_fn, result, do_not_fastmem_marker]{
                             CodePtr save_code_ptr = code.GetCodePtr();
                             code.SetCodePtr(patch_location);
                             FixupBranch thunk = code.B();
@@ -1000,10 +983,12 @@ void A32EmitA64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr c
     std::pair<ARM64Reg, ARM64Reg> host_base_and_add;
 
     if (config.tlb_entries) {
-        host_base_and_add = EmitTLBLookup(code, ctx, config, bitsize, abort, vaddr);
+        host_base_and_add = EmitTLBLookup(code, ctx, config, bit_size, abort, vaddr, MemoryPermissionRead);
     } else if (config.page_table) {
-        host_base_and_add = EmitVAddrLookup(code, ctx, config, bitsize, abort, vaddr);
+        host_base_and_add = EmitVAddrLookup(code, ctx, config, bit_size, abort, vaddr);
     } else {
+        ARM64Reg result = ctx.reg_alloc.ScratchGpr();
+
         code.BL(callback_fn);
         code.MOV(result, code.ABI_RETURN);
         ctx.reg_alloc.DefineValue(inst, result);
@@ -1011,7 +996,8 @@ void A32EmitA64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr c
         return;
     }
 
-    EmitReadMemoryLdr<bit_size>(code, result, host_base_and_add.first, host_base_and_add.second); 
+    const ARM64Reg result = host_base_and_add.first;
+    EmitReadMemoryLdr<bit_size>(code, result, host_base_and_add.first, host_base_and_add.second);
 
     end = code.B();
 
@@ -1042,12 +1028,14 @@ void A32EmitA64::WriteMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr 
 
     if (ShouldFastmem(do_not_fastmem_marker)) {
         const CodePtr patch_location = code.GetCodePtr();
+        ARM64Reg result = ctx.reg_alloc.ScratchGpr();
+
         EmitWriteMemoryStr<bit_size>(code, value, X27, vaddr);
 
         fastmem_patch_info.emplace(
                 patch_location,
                 FastmemPatchInfo{
-                        [this, patch_location, page_table_lookup, callback_fn, do_not_fastmem_marker]{
+                        [this, patch_location, callback_fn, do_not_fastmem_marker]{
                             CodePtr save_code_ptr = code.GetCodePtr();
                             code.SetCodePtr(patch_location);
                             FixupBranch thunk = code.B();
@@ -1076,15 +1064,15 @@ void A32EmitA64::WriteMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr 
     std::pair<ARM64Reg, ARM64Reg> host_base_and_add;
 
     if (config.tlb_entries) {
-        host_base_and_add = EmitTLBLookup(code, ctx, config, bitsize, abort, vaddr);
+        host_base_and_add = EmitTLBLookup(code, ctx, config, bit_size, abort, vaddr, MemoryPermissionWrite);
     } else if (config.page_table) {
-        host_base_and_add = EmitVAddrLookup(code, ctx, config, bitsize, abort, vaddr);
+        host_base_and_add = EmitVAddrLookup(code, ctx, config, bit_size, abort, vaddr);
     } else {
         code.BL(callback_fn);
         return;
     }
 
-    EmitWriteMemoryStr<bit_size>(value, host_base_and_add.first, host_base_and_add.second);
+    EmitWriteMemoryStr<bit_size>(code, value, host_base_and_add.first, host_base_and_add.second);
 
     end = code.B();
 
