@@ -6,6 +6,7 @@ add_executable(dynarmic_tests
     A32/test_arm_disassembler.cpp
     A32/test_arm_instructions.cpp
     A32/test_thumb_instructions.cpp
+    A32/test_tlb.cpp
     A32/testenv.h
     decoder_tests.cpp
     fp/FPToFixed.cpp
