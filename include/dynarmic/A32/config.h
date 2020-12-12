@@ -11,6 +11,7 @@
 #include <memory>
 
 #include <dynarmic/optimization_flags.h>
+#include <dynarmic/tlb.h>
 
 namespace Dynarmic {
 class ExclusiveMonitor;
@@ -155,6 +156,16 @@ struct UserConfig {
     /// Determines if instructions that pagefault should cause recompilation of that block
     /// with fastmem disabled.
     bool recompile_on_fastmem_failure = true;
+
+    /// TLB entries pointer
+    /// This is used for extremely fast lookup, that can be easily flushed for multi address-space purposes.
+    /// If the TLB misses (wrong access permission or the TLB entry for the address does not exist),
+    /// the JIT will fallback to calling the MemoryRead*/MemoryWrite* callbacks. It's expected that
+    /// during those hooks, users will manage to fill in new TLB entries.
+    ///
+    /// Note: The page table serves a similar purpose, but in the case of difficulties maintaining and switching
+    ///       page entries for performance reasons, it's preferred to use this.
+    TLBEntry *tlb_entries = nullptr;
 
     // Coprocessors
     std::array<std::shared_ptr<Coprocessor>, 16> coprocessors{};

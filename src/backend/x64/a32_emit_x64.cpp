@@ -33,6 +33,8 @@
 #include "frontend/ir/microinstruction.h"
 #include "frontend/ir/opcodes.h"
 
+#include <iostream>
+
 // TODO: Have ARM flags in host flags and not have them use up GPR registers unless necessary.
 // TODO: Actually implement that proper instruction selector you've always wanted to sweetheart.
 
@@ -96,7 +98,7 @@ A32EmitX64::BlockDescriptor A32EmitX64::Emit(IR::Block& block) {
 
     static const std::vector<HostLoc> gpr_order = [this]{
         std::vector<HostLoc> gprs{any_gpr};
-        if (conf.page_table) {
+        if (conf.page_table || conf.tlb_entries) {
             gprs.erase(std::find(gprs.begin(), gprs.end(), HostLoc::R14));
         }
         if (conf.fastmem_pointer) {
@@ -935,6 +937,60 @@ void EmitDetectMisaignedVAddr(BlockOfCode& code, A32EmitContext& ctx, size_t bit
     code.SwitchToNearCode();
 }
 
+Xbyak::RegExp EmitTLBLookup(BlockOfCode& code, A32EmitContext& ctx, size_t bitsize, Xbyak::Label& abort, Xbyak::Reg64 vaddr,
+    MemoryPermission access_type) {
+    std::size_t check_offset = 0;
+
+    // Access to lower word....
+    switch (access_type) {
+    case MemoryPermissionRead:
+        check_offset = offsetof(TLBEntry, read_addr);
+        break;
+
+    case MemoryPermissionWrite:
+        check_offset = offsetof(TLBEntry, write_addr);
+        break;
+
+    case MemoryPermissionExecute:
+        check_offset = offsetof(TLBEntry, execute_addr);
+        break;
+
+    default:
+        UNREACHABLE();
+        break;
+    }
+
+    const Xbyak::Reg32 tmp = ctx.reg_alloc.ScratchGpr().cvt32();
+    const Xbyak::Reg32 tmp2 = ctx.reg_alloc.ScratchGpr().cvt32();
+    const Xbyak::Reg64 entryoff = ctx.reg_alloc.ScratchGpr();
+    const Xbyak::Reg64 hostaddr = ctx.reg_alloc.ScratchGpr();
+
+    EmitDetectMisaignedVAddr(code, ctx, bitsize, abort, vaddr.cvt32(), tmp);
+
+    code.mov(tmp, vaddr.cvt32());
+    code.shr(tmp, static_cast<int>(page_bits));
+    code.mov(tmp2, tmp);                /// Store page index in tmp2...
+
+    code.and_(tmp, 0b111111111);
+
+    code.imul(entryoff, tmp, sizeof(TLBEntry));
+    code.add(entryoff, r14);
+
+    code.mov(tmp, dword[entryoff + check_offset]);
+
+    code.shr(tmp, static_cast<int>(page_bits));         /// Get the page index
+    code.cmp(tmp, tmp2);                                /// Compare the page index stored.
+
+    code.jne(abort, code.T_NEAR);
+
+    code.mov(hostaddr, qword[entryoff + offsetof(TLBEntry, host_base)]);
+
+    code.mov(tmp, vaddr.cvt32());
+    code.and_(tmp, static_cast<u32>(page_mask));
+
+    return hostaddr + tmp.cvt64();
+}
+
 Xbyak::RegExp EmitVAddrLookup(BlockOfCode& code, A32EmitContext& ctx, size_t bitsize, Xbyak::Label& abort, Xbyak::Reg64 vaddr) {
     const Xbyak::Reg64 page = ctx.reg_alloc.ScratchGpr();
     const Xbyak::Reg32 tmp = ctx.conf.absolute_offset_page_table ? page.cvt32() : ctx.reg_alloc.ScratchGpr().cvt32();
@@ -1002,7 +1058,7 @@ template<std::size_t bitsize, auto callback>
 void A32EmitX64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
 
-    if (!conf.page_table) {
+    if (!conf.page_table && !conf.tlb_entries) {
         ctx.reg_alloc.HostCall(inst, {}, args[0]);
         Devirtualize<callback>(conf.callbacks).EmitCall(code);
         return;
@@ -1031,8 +1087,14 @@ void A32EmitX64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst) {
     }
 
     Xbyak::Label abort, end;
+    Xbyak::RegExp src_ptr;
 
-    const auto src_ptr = EmitVAddrLookup(code, ctx, bitsize, abort, vaddr);
+    if (conf.tlb_entries) {
+        src_ptr = EmitTLBLookup(code, ctx, bitsize, abort, vaddr, MemoryPermissionRead);
+    } else {
+        src_ptr = EmitVAddrLookup(code, ctx, bitsize, abort, vaddr);
+    }
+ 
     EmitReadMemoryMov<bitsize>(code, value, src_ptr);
     code.L(end);
 
@@ -1049,7 +1111,7 @@ template<std::size_t bitsize, auto callback>
 void A32EmitX64::WriteMemory(A32EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
 
-    if (!conf.page_table) {
+    if (!conf.page_table && !conf.tlb_entries) {
         ctx.reg_alloc.HostCall(nullptr, {}, args[0], args[1]);
         Devirtualize<callback>(conf.callbacks).EmitCall(code);
         return;
@@ -1077,8 +1139,14 @@ void A32EmitX64::WriteMemory(A32EmitContext& ctx, IR::Inst* inst) {
     }
 
     Xbyak::Label abort, end;
+    Xbyak::RegExp dest_ptr;
 
-    const auto dest_ptr = EmitVAddrLookup(code, ctx, bitsize, abort, vaddr);
+    if (conf.tlb_entries) {
+        dest_ptr = EmitTLBLookup(code, ctx, bitsize, abort, vaddr, MemoryPermissionWrite);
+    } else {
+        dest_ptr = EmitVAddrLookup(code, ctx, bitsize, abort, vaddr);
+    }
+
     EmitWriteMemoryMov<bitsize>(code, dest_ptr, value);
     code.L(end);
 
