@@ -821,62 +821,6 @@ void A32EmitA64::DoNotFastmem(const DoNotFastmemMarker& marker) {
     InvalidateBasicBlocks({std::get<0>(marker)});
 }
 
-/*
-Xbyak::RegExp EmitTLBLookup(BlockOfCode& code, A32EmitContext& ctx, size_t bitsize, Xbyak::Label& abort, Xbyak::Reg64 vaddr,
-    MemoryPermission access_type) {
-    std::size_t check_offset = 0;
-
-    // Access to lower word....
-    switch (access_type) {
-    case MemoryPermissionRead:
-        check_offset = offsetof(TLBEntry, read_addr);
-        break;
-
-    case MemoryPermissionWrite:
-        check_offset = offsetof(TLBEntry, write_addr);
-        break;
-
-    case MemoryPermissionExecute:
-        check_offset = offsetof(TLBEntry, execute_addr);
-        break;
-
-    default:
-        UNREACHABLE();
-        break;
-    }
-
-    const Xbyak::Reg32 tmp = ctx.reg_alloc.ScratchGpr().cvt32();
-    const Xbyak::Reg32 tmp2 = ctx.reg_alloc.ScratchGpr().cvt32();
-    const Xbyak::Reg64 entryoff = ctx.reg_alloc.ScratchGpr();
-    const Xbyak::Reg64 hostaddr = ctx.reg_alloc.ScratchGpr();
-
-    EmitDetectMisaignedVAddr(code, ctx, bitsize, abort, vaddr.cvt32(), tmp);
-
-    code.mov(tmp, vaddr.cvt32());
-    code.shr(tmp, static_cast<int>(page_bits));
-    code.mov(tmp2, tmp);                /// Store page index in tmp2...
-
-    code.and_(tmp, 0b111111111);
-
-    code.imul(entryoff, tmp, sizeof(TLBEntry));
-    code.add(entryoff, r14);
-
-    code.mov(tmp, dword[entryoff + check_offset]);
-
-    code.shr(tmp, static_cast<int>(page_bits));         /// Get the page index
-    code.cmp(tmp, tmp2);                                /// Compare the page index stored.
-
-    code.jne(abort, code.T_NEAR);
-
-    code.mov(hostaddr, qword[entryoff + offsetof(TLBEntry, host_base)]);
-
-    code.mov(tmp, vaddr.cvt32());
-    code.and_(tmp, static_cast<u32>(page_mask));
-
-    return hostaddr + tmp.cvt64();
-}
-*/
-
 template<std::size_t bitsize>
 void EmitReadMemoryLdr(BlockOfCode& code, const ARM64Reg &dest, const ARM64Reg base, const ARM64Reg add) {
     switch (bitsize) {
@@ -951,7 +895,57 @@ std::pair<ARM64Reg, ARM64Reg> EmitVAddrLookup(BlockOfCode& code, A32EmitContext&
     abort = code.CBZ(result);
     code.ANDI2R(vaddr, vaddr, 4095);
 
-    return std::make_pair(vaddr);
+    return std::make_pair(result, vaddr);
+}
+
+std::pair<ARM64Reg, ARM64Reg> EmitTLBLookup(BlockOfCode& code, A32EmitContext& ctx, Dynarmic::A32::Config &config,
+    size_t bitsize, FixupBranch& abort, ARM64Reg vaddr) {
+    std::size_t check_offset = 0;
+
+    // Access to lower word....
+    switch (access_type) {
+    case MemoryPermissionRead:
+        check_offset = offsetof(TLBEntry, read_addr);
+        break;
+
+    case MemoryPermissionWrite:
+        check_offset = offsetof(TLBEntry, write_addr);
+        break;
+
+    case MemoryPermissionExecute:
+        check_offset = offsetof(TLBEntry, execute_addr);
+        break;
+
+    default:
+        UNREACHABLE();
+        break;
+    }
+
+    ARM64Reg tmp = code.ABI_RETURN;
+    ARM64Reg tmp2 = ctx.reg_alloc.ScratchGpr();
+    ARM64Reg offset = ctx.reg_alloc.ScratchGpr();
+    
+    ARM64Reg tmp_32 = DecodeReg(tmp);
+
+    code.MOVP2R(result, config.page_table);
+    code.MOV(tmp, vaddr, ArithOption{vaddr, ST_LSR, 12});
+    code.MOV(tmp2, tmp);
+
+    // Calculate offset to the TLB entry
+    code.ANDI2R(tmp, 0b111111111);
+    code.LSL(offset, tmp, 5);
+    code.ADD(offset, result, offset);
+
+    code.LDR(tmp_32, offset, check_offset);
+    code.SHR(tmp_32, tmp_32, 12);
+
+    code.CMP(DecodeReg(tmp2), tmp_32);
+    abort = code.B(CC_NEQ);
+
+    code.LDR(result, offset, offsetof(TLBEntry, host_base));
+    code.ANDI2R(vaddr, vaddr, 4095);
+
+    return std::make_pair(result, vaddr);
 }
 
 template <typename T>
@@ -1003,26 +997,30 @@ void A32EmitA64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr c
     FixupBranch end{};
     FixupBranch abort{};
 
+    std::pair<ARM64Reg, ARM64Reg> host_base_and_add;
+
     if (config.tlb_entries) {
-        
+        host_base_and_add = EmitTLBLookup(code, ctx, config, bitsize, abort, vaddr);
     } else if (config.page_table) {
-        auto host_base_and_add = EmitVAddrLookup(code, ctx, config, bitsize, abort, vaddr);
-        EmitReadMemoryLdr<bit_size>(code, result, host_base_and_add.first, host_base_and_add.second); 
-
-        end = code.B();
-
-        code.SetJumpTarget(abort);
+        host_base_and_add = EmitVAddrLookup(code, ctx, config, bitsize, abort, vaddr);
+    } else {
         code.BL(callback_fn);
         code.MOV(result, code.ABI_RETURN);
-        
-        code.SetJumpTarget(end);
-
         ctx.reg_alloc.DefineValue(inst, result);
+
         return;
     }
 
+    EmitReadMemoryLdr<bit_size>(code, result, host_base_and_add.first, host_base_and_add.second); 
+
+    end = code.B();
+
+    code.SetJumpTarget(abort);
     code.BL(callback_fn);
     code.MOV(result, code.ABI_RETURN);
+    
+    code.SetJumpTarget(end);
+
     ctx.reg_alloc.DefineValue(inst, result);
 }
 
@@ -1075,22 +1073,24 @@ void A32EmitA64::WriteMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr 
     FixupBranch end{};
     FixupBranch abort{};
 
+    std::pair<ARM64Reg, ARM64Reg> host_base_and_add;
+
     if (config.tlb_entries) {
-
+        host_base_and_add = EmitTLBLookup(code, ctx, config, bitsize, abort, vaddr);
     } else if (config.page_table) {
-        auto host_base_and_add = EmitVAddrLookup(code, ctx, config, bitsize, abort, vaddr);
-        EmitWriteMemoryStr<bit_size>(value, host_base_and_add.first, host_base_and_add.second);
-
-        end = code.B();
-
-        code.SetJumpTarget(abort);
+        host_base_and_add = EmitVAddrLookup(code, ctx, config, bitsize, abort, vaddr);
+    } else {
         code.BL(callback_fn);
-        code.SetJumpTarget(end);
-        
         return;
     }
 
+    EmitWriteMemoryStr<bit_size>(value, host_base_and_add.first, host_base_and_add.second);
+
+    end = code.B();
+
+    code.SetJumpTarget(abort);
     code.BL(callback_fn);
+    code.SetJumpTarget(end);
 }
 
 void A32EmitA64::EmitA32ReadMemory8(A32EmitContext& ctx, IR::Inst* inst) {
