@@ -821,6 +821,139 @@ void A32EmitA64::DoNotFastmem(const DoNotFastmemMarker& marker) {
     InvalidateBasicBlocks({std::get<0>(marker)});
 }
 
+/*
+Xbyak::RegExp EmitTLBLookup(BlockOfCode& code, A32EmitContext& ctx, size_t bitsize, Xbyak::Label& abort, Xbyak::Reg64 vaddr,
+    MemoryPermission access_type) {
+    std::size_t check_offset = 0;
+
+    // Access to lower word....
+    switch (access_type) {
+    case MemoryPermissionRead:
+        check_offset = offsetof(TLBEntry, read_addr);
+        break;
+
+    case MemoryPermissionWrite:
+        check_offset = offsetof(TLBEntry, write_addr);
+        break;
+
+    case MemoryPermissionExecute:
+        check_offset = offsetof(TLBEntry, execute_addr);
+        break;
+
+    default:
+        UNREACHABLE();
+        break;
+    }
+
+    const Xbyak::Reg32 tmp = ctx.reg_alloc.ScratchGpr().cvt32();
+    const Xbyak::Reg32 tmp2 = ctx.reg_alloc.ScratchGpr().cvt32();
+    const Xbyak::Reg64 entryoff = ctx.reg_alloc.ScratchGpr();
+    const Xbyak::Reg64 hostaddr = ctx.reg_alloc.ScratchGpr();
+
+    EmitDetectMisaignedVAddr(code, ctx, bitsize, abort, vaddr.cvt32(), tmp);
+
+    code.mov(tmp, vaddr.cvt32());
+    code.shr(tmp, static_cast<int>(page_bits));
+    code.mov(tmp2, tmp);                /// Store page index in tmp2...
+
+    code.and_(tmp, 0b111111111);
+
+    code.imul(entryoff, tmp, sizeof(TLBEntry));
+    code.add(entryoff, r14);
+
+    code.mov(tmp, dword[entryoff + check_offset]);
+
+    code.shr(tmp, static_cast<int>(page_bits));         /// Get the page index
+    code.cmp(tmp, tmp2);                                /// Compare the page index stored.
+
+    code.jne(abort, code.T_NEAR);
+
+    code.mov(hostaddr, qword[entryoff + offsetof(TLBEntry, host_base)]);
+
+    code.mov(tmp, vaddr.cvt32());
+    code.and_(tmp, static_cast<u32>(page_mask));
+
+    return hostaddr + tmp.cvt64();
+}
+*/
+
+template<std::size_t bitsize>
+void EmitReadMemoryLdr(BlockOfCode& code, const ARM64Reg &dest, const ARM64Reg base, const ARM64Reg add) {
+    switch (bitsize) {
+        case 8:
+            code.LDRB(DecodeReg(dest), base, add);
+            break;
+        case 16:
+            code.LDRH(DecodeReg(dest), base, add);
+            break;
+        case 32:
+            code.LDR(DecodeReg(dest), base, add);
+            break;
+        case 64:
+            code.LDR(dest, base, add);
+            break;
+        default:
+            ASSERT_FALSE("Invalid bit_size");
+            break;
+    }
+}
+
+template<std::size_t bitsize>
+void EmitReadMemoryLdr(BlockOfCode& code, const ARM64Reg dest, const ARM64Reg base, const ARM64Reg add) {
+    switch (bitsize) {
+        case 8:
+            code.LDRB(DecodeReg(dest), base, add);
+            break;
+        case 16:
+            code.LDRH(DecodeReg(dest), base, add);
+            break;
+        case 32:
+            code.LDR(DecodeReg(dest), base, add);
+            break;
+        case 64:
+            code.LDR(dest, base, add);
+            break;
+        default:
+            ASSERT_FALSE("Invalid bit_size");
+            break;
+    }
+}
+
+template<std::size_t bitsize>
+void EmitWriteMemoryStr(BlockOfCode& code, const ARM64Reg value, const ARM64Reg base, const ARM64Reg add) {
+    switch (bit_size) {
+        case 8:
+            code.STRB(DecodeReg(value), base, add);
+            break;
+        case 16:
+            code.STRH(DecodeReg(value), base, add);
+            break;
+        case 32:
+            code.STR(DecodeReg(value), base, add);
+            break;
+        case 64:
+            code.STR(value, base, add);
+            break;
+        default:
+            ASSERT_FALSE("Invalid bit_size");
+            break;
+    }
+}
+
+std::pair<ARM64Reg, ARM64Reg> EmitVAddrLookup(BlockOfCode& code, A32EmitContext& ctx, Dynarmic::A32::Config &config,
+    size_t bitsize, FixupBranch& abort, ARM64Reg vaddr) {
+    ARM64Reg tmp = code.ABI_RETURN;
+
+    code.MOVP2R(result, config.page_table);
+    code.MOV(tmp, vaddr, ArithOption{vaddr, ST_LSR, 12});
+    code.LDR(result, result, ArithOption{tmp, true});
+
+    abort = code.CBZ(result);
+    code.ANDI2R(vaddr, vaddr, 4095);
+
+    return std::make_pair(vaddr);
+}
+
 template <typename T>
 void A32EmitA64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr callback_fn) {
     constexpr size_t bit_size = Common::BitSize<T>();
@@ -835,57 +968,9 @@ void A32EmitA64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr c
 
     const auto do_not_fastmem_marker = GenerateDoNotFastmemMarker(ctx, inst);
 
-    const auto page_table_lookup = [this, result, vaddr, tmp, callback_fn](FixupBranch& end) {
-        constexpr size_t bit_size = Common::BitSize<T>();
-
-        code.MOVP2R(result, config.page_table);
-        code.MOV(tmp, vaddr, ArithOption{vaddr, ST_LSR, 12});
-        code.LDR(result, result, ArithOption{tmp, true});
-        FixupBranch abort = code.CBZ(result);
-        code.ANDI2R(vaddr, vaddr, 4095);
-        switch (bit_size) {
-            case 8:
-                code.LDRB(DecodeReg(result), result, vaddr);
-                break;
-            case 16:
-                code.LDRH(DecodeReg(result), result, vaddr);
-                break;
-            case 32:
-                code.LDR(DecodeReg(result), result, vaddr);
-                break;
-            case 64:
-                code.LDR(result, result, vaddr);
-                break;
-            default:
-                ASSERT_FALSE("Invalid bit_size");
-                break;
-        }
-        end = code.B();
-        code.SetJumpTarget(abort);
-        code.BL(callback_fn);
-        code.MOV(result, code.ABI_RETURN);
-    };
-
-
     if (ShouldFastmem(do_not_fastmem_marker)) {
         const CodePtr patch_location = code.GetCodePtr();
-        switch (bit_size) {
-            case 8:
-                code.LDRB(DecodeReg(result), X27, vaddr);
-                break;
-            case 16:
-                code.LDRH(DecodeReg(result), X27, vaddr);
-                break;
-            case 32:
-                code.LDR(DecodeReg(result), X27, vaddr);
-                break;
-            case 64:
-                code.LDR(result, X27, vaddr);
-                break;
-            default:
-                ASSERT_FALSE("Invalid bit_size");
-                break;
-        }
+        EmitReadMemoryLdr<bit_size>(code, result, X27, vaddr);
 
         fastmem_patch_info.emplace(
                 patch_location,
@@ -899,14 +984,10 @@ void A32EmitA64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr c
                             code.SetCodePtr(save_code_ptr);
                             code.SwitchToFarCode();
                             code.SetJumpTarget(thunk);
-                            if (config.page_table) {
-                                FixupBranch end{};
-                                page_table_lookup(end);
-                                code.SetJumpTarget(end, end_ptr);
-                            } else {
-                                code.BL(callback_fn);
-                                code.MOV(result, code.ABI_RETURN);
-                            }
+                            
+                            code.BL(callback_fn);
+                            code.MOV(result, code.ABI_RETURN);
+
                             code.B(end_ptr);
                             code.FlushIcache();
                             code.SwitchToNearCode();
@@ -919,17 +1000,29 @@ void A32EmitA64::ReadMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr c
         return;
     }
 
-    if (!config.page_table) {
+    FixupBranch end{};
+    FixupBranch abort{};
+
+    if (config.tlb_entries) {
+        
+    } else if (config.page_table) {
+        auto host_base_and_add = EmitVAddrLookup(code, ctx, config, bitsize, abort, vaddr);
+        EmitReadMemoryLdr<bit_size>(code, result, host_base_and_add.first, host_base_and_add.second); 
+
+        end = code.B();
+
+        code.SetJumpTarget(abort);
         code.BL(callback_fn);
         code.MOV(result, code.ABI_RETURN);
+        
+        code.SetJumpTarget(end);
+
         ctx.reg_alloc.DefineValue(inst, result);
         return;
     }
 
-    FixupBranch end{};
-    page_table_lookup(end);
-    code.SetJumpTarget(end);
-
+    code.BL(callback_fn);
+    code.MOV(result, code.ABI_RETURN);
     ctx.reg_alloc.DefineValue(inst, result);
 }
 
@@ -949,55 +1042,9 @@ void A32EmitA64::WriteMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr 
 
     const auto do_not_fastmem_marker = GenerateDoNotFastmemMarker(ctx, inst);
 
-    const auto page_table_lookup = [this, vaddr, value, page_index, addr, callback_fn](FixupBranch& end) {
-        constexpr size_t bit_size = Common::BitSize<T>();
-
-        code.MOVP2R(addr, config.page_table);
-        code.MOV(DecodeReg(page_index), vaddr, ArithOption{vaddr, ST_LSR, 12});
-        code.LDR(addr, addr, ArithOption{page_index, true});
-        FixupBranch abort = code.CBZ(addr);
-        code.ANDI2R(vaddr, vaddr, 4095);
-        switch (bit_size) {
-            case 8:
-                code.STRB(DecodeReg(value), addr, vaddr);
-                break;
-            case 16:
-                code.STRH(DecodeReg(value), addr, vaddr);
-                break;
-            case 32:
-                code.STR(DecodeReg(value), addr, vaddr);;
-                break;
-            case 64:
-                code.STR(value, addr, vaddr);
-                break;
-            default:
-                ASSERT_FALSE("Invalid bit_size");
-                break;
-        }
-        end = code.B();
-        code.SetJumpTarget(abort);
-        code.BL(callback_fn);
-    };
-
     if (ShouldFastmem(do_not_fastmem_marker)) {
         const CodePtr patch_location = code.GetCodePtr();
-        switch (bit_size) {
-            case 8:
-                code.STRB(DecodeReg(value), X27, vaddr);
-                break;
-            case 16:
-                code.STRH(DecodeReg(value), X27, vaddr);
-                break;
-            case 32:
-                code.STR(DecodeReg(value), X27, vaddr);
-                break;
-            case 64:
-                code.STR(value, X27, vaddr);
-                break;
-            default:
-                ASSERT_FALSE("Invalid bit_size");
-                break;
-        }
+        EmitWriteMemoryStr<bit_size>(code, value, X27, vaddr);
 
         fastmem_patch_info.emplace(
                 patch_location,
@@ -1007,17 +1054,13 @@ void A32EmitA64::WriteMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr 
                             code.SetCodePtr(patch_location);
                             FixupBranch thunk = code.B();
                             u8* end_ptr = code.GetWritableCodePtr();
+
                             code.FlushIcacheSection(reinterpret_cast<const u8*>(patch_location), end_ptr);
                             code.SetCodePtr(save_code_ptr);
                             code.SwitchToFarCode();
                             code.SetJumpTarget(thunk);
-                            if (config.page_table) {
-                                FixupBranch end{};
-                                page_table_lookup(end);
-                                code.SetJumpTarget(end, end_ptr);
-                            } else {
-                                code.BL(callback_fn);
-                            }
+                            code.BL(callback_fn);
+
                             code.B(end_ptr);
                             code.FlushIcache();
                             code.SwitchToNearCode();
@@ -1028,14 +1071,26 @@ void A32EmitA64::WriteMemory(A32EmitContext& ctx, IR::Inst* inst, const CodePtr 
         return;
     }
 
-    if (!config.page_table) {
+
+    FixupBranch end{};
+    FixupBranch abort{};
+
+    if (config.tlb_entries) {
+
+    } else if (config.page_table) {
+        auto host_base_and_add = EmitVAddrLookup(code, ctx, config, bitsize, abort, vaddr);
+        EmitWriteMemoryStr<bit_size>(value, host_base_and_add.first, host_base_and_add.second);
+
+        end = code.B();
+
+        code.SetJumpTarget(abort);
         code.BL(callback_fn);
+        code.SetJumpTarget(end);
+        
         return;
     }
 
-    FixupBranch end{};
-    page_table_lookup(end);
-    code.SetJumpTarget(end);
+    code.BL(callback_fn);
 }
 
 void A32EmitA64::EmitA32ReadMemory8(A32EmitContext& ctx, IR::Inst* inst) {
