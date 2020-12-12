@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace Dynarmic {
@@ -47,12 +48,6 @@ public:
     explicit TLB(std::size_t page_bits)
         : page_bits(page_bits) {
         page_mask = (1 << page_bits) - 1;
-
-        /*
-        for (std::size_t i = 0; i < TLB_ENTRY_COUNT; i++) {
-            entries[i].read_addr = i + 1;
-            entries[i].write_addr = i + 1;
-        }*/
         Flush();
     }
 
