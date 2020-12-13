@@ -913,7 +913,9 @@ std::pair<ARM64Reg, ARM64Reg> EmitTLBLookup(BlockOfCode& code, A32EmitContext& c
     code.MOV(tmp, vaddr, ArithOption{vaddr, ST_LSR, 12});
     code.MOV(tmp2, tmp);
 
-    // Calculate offset to the TLB entry
+    // Calculate index to the TLB entry
+    // Was going to use index registers, but because we do two loads
+    // It's not really gonna save anything sadly...
     code.ANDI2R(offset, tmp, 0b111111111);
     code.LSL(offset, offset, 5);
     code.ADD(offset, result, offset);

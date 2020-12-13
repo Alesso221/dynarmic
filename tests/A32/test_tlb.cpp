@@ -44,13 +44,14 @@ TEST_CASE("tlb: All entries hit", "[tlb]") {
     jit.Run();
 
     REQUIRE(jit.Regs()[3] == 200);
+    REQUIRE(page2[1] == 600);
     REQUIRE(page2[2] == 0x11111111);
 }
 
 TEST_CASE("tlb: Miss TLB", "[tlb]") {
     ArmTestEnv env;
 
-    std::uint32_t page1[2] = { 100, 200 };
+    std::uint32_t page1[3] = { 100, 200, 300 };
 
     const std::uint32_t perm = Dynarmic::MemoryPermissionRead | Dynarmic::MemoryPermissionWrite;
 
@@ -78,6 +79,8 @@ TEST_CASE("tlb: Miss TLB", "[tlb]") {
     jit.Run();
 
     REQUIRE(jit.Regs()[3] == 0xf0e0d0c);
+
+    REQUIRE(page1[1] == 200);
     REQUIRE(page1[2] == 0x11111111);
 }
 
