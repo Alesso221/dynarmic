@@ -909,7 +909,7 @@ std::pair<ARM64Reg, ARM64Reg> EmitTLBLookup(BlockOfCode& code, A32EmitContext& c
     
     ARM64Reg tmp_32 = DecodeReg(tmp);
 
-    code.MOVP2R(result, config.page_table);
+    code.MOVP2R(result, config.tlb_entries);
     code.MOV(tmp, vaddr, ArithOption{vaddr, ST_LSR, 12});
     code.MOV(tmp2, tmp);
 
