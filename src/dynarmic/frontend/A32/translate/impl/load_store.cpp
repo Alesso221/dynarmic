@@ -798,7 +798,7 @@ bool TranslatorVisitor::arm_LDM(Cond cond, bool W, Reg n, RegList list) {
     if (n == Reg::PC || mcl::bit::count_ones(list) < 1) {
         return UnpredictableInstruction();
     }
-    if (W && mcl::bit::get_bit(static_cast<size_t>(n), list)) {
+    if (W && mcl::bit::get_bit(static_cast<size_t>(n), list) && !options.define_unpredictable_behaviour) {
         return UnpredictableInstruction();
     }
 
@@ -816,7 +816,7 @@ bool TranslatorVisitor::arm_LDMDA(Cond cond, bool W, Reg n, RegList list) {
     if (n == Reg::PC || mcl::bit::count_ones(list) < 1) {
         return UnpredictableInstruction();
     }
-    if (W && mcl::bit::get_bit(static_cast<size_t>(n), list)) {
+    if (W && mcl::bit::get_bit(static_cast<size_t>(n), list) && !options.define_unpredictable_behaviour) {
         return UnpredictableInstruction();
     }
 
@@ -834,7 +834,7 @@ bool TranslatorVisitor::arm_LDMDB(Cond cond, bool W, Reg n, RegList list) {
     if (n == Reg::PC || mcl::bit::count_ones(list) < 1) {
         return UnpredictableInstruction();
     }
-    if (W && mcl::bit::get_bit(static_cast<size_t>(n), list)) {
+    if (W && mcl::bit::get_bit(static_cast<size_t>(n), list) && !options.define_unpredictable_behaviour) {
         return UnpredictableInstruction();
     }
 
@@ -852,7 +852,7 @@ bool TranslatorVisitor::arm_LDMIB(Cond cond, bool W, Reg n, RegList list) {
     if (n == Reg::PC || mcl::bit::count_ones(list) < 1) {
         return UnpredictableInstruction();
     }
-    if (W && mcl::bit::get_bit(static_cast<size_t>(n), list)) {
+    if (W && mcl::bit::get_bit(static_cast<size_t>(n), list) && !options.define_unpredictable_behaviour) {
         return UnpredictableInstruction();
     }
 
