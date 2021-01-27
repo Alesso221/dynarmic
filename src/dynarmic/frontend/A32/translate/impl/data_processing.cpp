@@ -520,7 +520,7 @@ bool TranslatorVisitor::arm_MOV_reg(Cond cond, bool S, Reg d, Imm<5> imm5, Shift
     const auto shifted = EmitImmShift(ir.GetRegister(m), shift, imm5, carry_in);
     const auto result = shifted.result;
     if (d == Reg::PC) {
-        if (S) {
+        if (S && !options.define_unpredictable_behaviour) {
             // This is UNPREDICTABLE when in user-mode.
             return UnpredictableInstruction();
         }
