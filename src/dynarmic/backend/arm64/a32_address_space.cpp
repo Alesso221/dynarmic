@@ -223,8 +223,8 @@ void A32AddressSpace::EmitPrelude() {
         code.MOV(X19, X0);
         code.MOV(Xstate, X1);
         code.MOV(Xhalt, X2);
-        if (conf.page_table) {
-            code.MOV(Xpagetable, mcl::bit_cast<u64>(conf.page_table));
+        if (conf.page_table || conf.tlb_entries) {
+            code.MOV(Xpagetable, conf.tlb_entries ? mcl::bit_cast<u64>(conf.tlb_entries) : mcl::bit_cast<u64>(conf.page_table));
         }
         if (conf.fastmem_pointer) {
             code.MOV(Xfastmem, mcl::bit_cast<u64>(conf.fastmem_pointer));
@@ -255,8 +255,8 @@ void A32AddressSpace::EmitPrelude() {
         code.MOV(X19, X0);
         code.MOV(Xstate, X1);
         code.MOV(Xhalt, X2);
-        if (conf.page_table) {
-            code.MOV(Xpagetable, mcl::bit_cast<u64>(conf.page_table));
+        if (conf.page_table || conf.tlb_entries) {
+            code.MOV(Xpagetable, conf.tlb_entries ? mcl::bit_cast<u64>(conf.tlb_entries) : mcl::bit_cast<u64>(conf.page_table));
         }
         if (conf.fastmem_pointer) {
             code.MOV(Xfastmem, mcl::bit_cast<u64>(conf.fastmem_pointer));
@@ -363,6 +363,9 @@ EmitConfig A32AddressSpace::GetEmitConfig() {
         .absolute_offset_page_table = conf.absolute_offset_page_table,
         .detect_misaligned_access_via_page_table = conf.detect_misaligned_access_via_page_table,
         .only_detect_misalignment_via_page_table_on_page_boundary = conf.only_detect_misalignment_via_page_table_on_page_boundary,
+
+        .tlb_pointer = mcl::bit_cast<u64>(conf.tlb_entries),
+        .tlb_index_mask = (1ULL << conf.tlb_index_mask_bits) - 1,
 
         .fastmem_pointer = mcl::bit_cast<u64>(conf.fastmem_pointer),
         .recompile_on_fastmem_failure = conf.recompile_on_fastmem_failure,

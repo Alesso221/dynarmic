@@ -57,7 +57,7 @@ void AxxEmitX64::EmitMemoryRead(AxxEmitContext& ctx, IR::Inst* inst) {
     const bool ordered = IsOrdered(args[2].GetImmediateAccType());
     const auto fastmem_marker = ShouldFastmem(ctx, inst);
 
-    if (!conf.page_table && !fastmem_marker) {
+    if (!conf.page_table && !conf.tlb_entries && !fastmem_marker) {
         // Neither fastmem nor page table: Use callbacks
         if constexpr (bitsize == 128) {
             ctx.reg_alloc.HostCall(nullptr, {}, args[1]);
@@ -118,8 +118,13 @@ void AxxEmitX64::EmitMemoryRead(AxxEmitContext& ctx, IR::Inst* inst) {
         });
     } else {
         // Use page table
-        ASSERT(conf.page_table);
-        const auto src_ptr = EmitVAddrLookup(code, ctx, bitsize, *abort, vaddr);
+        ASSERT(conf.page_table || conf.tlb_entries);
+        Xbyak::RegExp src_ptr;
+        if (conf.tlb_entries) {
+            src_ptr = EmitTLBLookup(code, ctx, bitsize, *abort, vaddr, MemoryPermission::Read);
+        } else {
+            src_ptr = EmitVAddrLookup(code, ctx, bitsize, *abort, vaddr);
+        }
         EmitReadMemoryMov<bitsize>(code, value_idx, src_ptr, ordered);
 
         ctx.deferred_emits.emplace_back([=, this, &ctx] {
@@ -144,7 +149,7 @@ void AxxEmitX64::EmitMemoryWrite(AxxEmitContext& ctx, IR::Inst* inst) {
     const bool ordered = IsOrdered(args[3].GetImmediateAccType());
     const auto fastmem_marker = ShouldFastmem(ctx, inst);
 
-    if (!conf.page_table && !fastmem_marker) {
+    if (!conf.page_table && !conf.tlb_entries && !fastmem_marker) {
         // Neither fastmem nor page table: Use callbacks
         if constexpr (bitsize == 128) {
             ctx.reg_alloc.Use(args[1], ABI_PARAM2);
@@ -205,8 +210,13 @@ void AxxEmitX64::EmitMemoryWrite(AxxEmitContext& ctx, IR::Inst* inst) {
         });
     } else {
         // Use page table
-        ASSERT(conf.page_table);
-        const auto dest_ptr = EmitVAddrLookup(code, ctx, bitsize, *abort, vaddr);
+        ASSERT(conf.page_table || conf.tlb_entries);
+        Xbyak::RegExp dest_ptr;
+        if (conf.tlb_entries) {
+            dest_ptr = EmitTLBLookup(code, ctx, bitsize, *abort, vaddr, MemoryPermission::Write);
+        } else {
+            dest_ptr = EmitVAddrLookup(code, ctx, bitsize, *abort, vaddr);
+        }
         EmitWriteMemoryMov<bitsize>(code, dest_ptr, value_idx, ordered);
 
         ctx.deferred_emits.emplace_back([=, this, &ctx] {

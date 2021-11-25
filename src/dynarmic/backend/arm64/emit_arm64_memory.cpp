@@ -18,6 +18,7 @@
 #include "dynarmic/backend/arm64/fpsr_manager.h"
 #include "dynarmic/backend/arm64/reg_alloc.h"
 #include "dynarmic/interface/halt_reason.h"
+#include "dynarmic/interface/tlb.h"
 #include "dynarmic/ir/acc_type.h"
 #include "dynarmic/ir/basic_block.h"
 #include "dynarmic/ir/microinstruction.h"
@@ -282,6 +283,52 @@ std::pair<oaknut::XReg, oaknut::XReg> InlinePageTableEmitVAddrLookup(oaknut::Cod
     return std::make_pair(Xscratch0, Xscratch1);
 }
 
+static_assert(sizeof(TLBEntry) == 32);
+constexpr size_t tlb_entry_size_lshift_bits = 5;
+
+template<std::size_t bitsize>
+std::pair<oaknut::XReg, oaknut::XReg> InlineTlbEmitVAddrLookup(oaknut::CodeGenerator& code, EmitContext& ctx, oaknut::XReg Xaddr, const SharedLabel& fallback, MemoryPermission access_type) {
+    std::size_t check_offset = 0;
+
+    // Access to lower word....
+    switch (access_type) {
+    case MemoryPermission::Read:
+        check_offset = offsetof(TLBEntry, read_addr);
+        break;
+
+    case MemoryPermission::Write:
+        check_offset = offsetof(TLBEntry, write_addr);
+        break;
+
+    case MemoryPermission::Execute:
+        check_offset = offsetof(TLBEntry, execute_addr);
+        break;
+
+    default:
+        UNREACHABLE();
+        break;
+    }
+
+    EmitDetectMisalignedVAddr<bitsize>(code, ctx, Xaddr, fallback);
+
+    code.LSR(Xscratch0, Xaddr, page_bits);
+
+    // Calculate offset to the TLB entry
+    code.AND(Xscratch0, Xscratch0, ctx.conf.tlb_index_mask);
+    code.ADD(Xscratch0, Xpagetable, Xscratch0, LSL, tlb_entry_size_lshift_bits);
+
+    code.LDR(Xscratch1, Xscratch0, check_offset);
+    code.LSR(Xscratch1, Xscratch1, page_bits);
+    code.CMP(Xscratch1, Xaddr, LSR, page_bits);
+
+    code.B(NE, *fallback);
+
+    code.LDR(Xscratch0, Xscratch0, offsetof(TLBEntry, host_base));
+    code.AND(Xscratch1, Xaddr, page_mask);
+
+    return std::make_pair(Xscratch0, Xscratch1);
+}
+
 template<std::size_t bitsize>
 CodePtr EmitMemoryLdr(oaknut::CodeGenerator& code, int value_idx, oaknut::XReg Xbase, oaknut::XReg Xoffset, bool ordered, bool extend32 = false) {
     const auto ext = extend32 ? oaknut::IndexExt::UXTW : oaknut::IndexExt::LSL;
@@ -356,7 +403,7 @@ CodePtr EmitMemoryStr(oaknut::CodeGenerator& code, int value_idx, oaknut::XReg X
 }
 
 template<size_t bitsize>
-void InlinePageTableEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+void InlinePageTableOrTlbEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     auto Xaddr = ctx.reg_alloc.ReadX(args[1]);
     auto Rvalue = [&] {
@@ -373,7 +420,7 @@ void InlinePageTableEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx
 
     SharedLabel fallback = GenSharedLabel(), end = GenSharedLabel();
 
-    const auto [Xbase, Xoffset] = InlinePageTableEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
+    const auto [Xbase, Xoffset] = ctx.conf.tlb_pointer ? InlineTlbEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback, MemoryPermission::Read) : InlinePageTableEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
     EmitMemoryLdr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered);
 
     ctx.deferred_emits.emplace_back([&code, &ctx, inst, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fallback, end] {
@@ -396,7 +443,7 @@ void InlinePageTableEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx
 }
 
 template<size_t bitsize>
-void InlinePageTableEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+void InlinePageTableOrTlbEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     auto Xaddr = ctx.reg_alloc.ReadX(args[1]);
     auto Rvalue = [&] {
@@ -413,7 +460,7 @@ void InlinePageTableEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ct
 
     SharedLabel fallback = GenSharedLabel(), end = GenSharedLabel();
 
-    const auto [Xbase, Xoffset] = InlinePageTableEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
+    const auto [Xbase, Xoffset] = ctx.conf.tlb_pointer ? InlineTlbEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback, MemoryPermission::Write) : InlinePageTableEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
     EmitMemoryStr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered);
 
     ctx.deferred_emits.emplace_back([&code, &ctx, inst, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fallback, end] {
@@ -585,8 +632,8 @@ template<size_t bitsize>
 void EmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
     if (const auto marker = ShouldFastmem(ctx, inst)) {
         FastmemEmitReadMemory<bitsize>(code, ctx, inst, *marker);
-    } else if (ctx.conf.page_table_pointer != 0) {
-        InlinePageTableEmitReadMemory<bitsize>(code, ctx, inst);
+    } else if ((ctx.conf.page_table_pointer != 0) || (ctx.conf.tlb_pointer != 0)){
+        InlinePageTableOrTlbEmitReadMemory<bitsize>(code, ctx, inst);
     } else {
         CallbackOnlyEmitReadMemory<bitsize>(code, ctx, inst);
     }
@@ -601,8 +648,8 @@ template<size_t bitsize>
 void EmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
     if (const auto marker = ShouldFastmem(ctx, inst)) {
         FastmemEmitWriteMemory<bitsize>(code, ctx, inst, *marker);
-    } else if (ctx.conf.page_table_pointer != 0) {
-        InlinePageTableEmitWriteMemory<bitsize>(code, ctx, inst);
+    } else if ((ctx.conf.page_table_pointer != 0) || (ctx.conf.tlb_pointer != 0)) {
+        InlinePageTableOrTlbEmitWriteMemory<bitsize>(code, ctx, inst);
     } else {
         CallbackOnlyEmitWriteMemory<bitsize>(code, ctx, inst);
     }

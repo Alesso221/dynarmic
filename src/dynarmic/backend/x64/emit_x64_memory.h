@@ -199,6 +199,117 @@ template<>
     }
 }
 
+template<typename EmitContext>
+Xbyak::RegExp EmitTLBLookup(BlockOfCode& code, EmitContext& ctx, size_t bitsize, Xbyak::Label& abort, Xbyak::Reg64 vaddr, MemoryPermission access_type);
+
+template<>
+[[maybe_unused]] Xbyak::RegExp EmitTLBLookup(BlockOfCode& code, A32EmitContext& ctx, size_t bitsize, Xbyak::Label& abort, Xbyak::Reg64 vaddr, MemoryPermission access_type) {
+    std::size_t check_offset = 0;
+
+    // Access to lower word....
+    switch (access_type) {
+    case MemoryPermission::Read:
+        check_offset = offsetof(TLBEntry, read_addr);
+        break;
+
+    case MemoryPermission::Write:
+        check_offset = offsetof(TLBEntry, write_addr);
+        break;
+
+    case MemoryPermission::Execute:
+        check_offset = offsetof(TLBEntry, execute_addr);
+        break;
+
+    default:
+        UNREACHABLE();
+        break;
+    }
+
+    const Xbyak::Reg32 tmp = ctx.reg_alloc.ScratchGpr().cvt32();
+    const Xbyak::Reg32 tmp2 = ctx.reg_alloc.ScratchGpr().cvt32();
+    const Xbyak::Reg64 entryoff = ctx.reg_alloc.ScratchGpr();
+    const Xbyak::Reg64 hostaddr = ctx.reg_alloc.ScratchGpr();
+
+    EmitDetectMisalignedVAddr(code, ctx, bitsize, abort, vaddr, tmp.cvt64());
+
+    code.mov(tmp, vaddr.cvt32());
+    code.shr(tmp, static_cast<int>(page_bits));
+    code.mov(tmp2, tmp);                /// Store page index in tmp2...
+
+    code.and_(tmp, (1UL << ctx.conf.tlb_index_mask_bits) - 1);
+
+    code.imul(entryoff, tmp, sizeof(TLBEntry));
+    code.add(entryoff, r14);
+
+    code.mov(tmp, dword[entryoff + check_offset]);
+
+    code.shr(tmp, static_cast<int>(page_bits));         /// Get the page index
+    code.cmp(tmp, tmp2);                                /// Compare the page index stored.
+
+    code.jne(abort, code.T_NEAR);
+
+    code.mov(hostaddr, qword[entryoff + offsetof(TLBEntry, host_base)]);
+
+    code.mov(tmp, vaddr.cvt32());
+    code.and_(tmp, static_cast<u32>(page_mask));
+
+    return hostaddr + tmp.cvt64();
+}
+
+template<>
+[[maybe_unused]] Xbyak::RegExp EmitTLBLookup(BlockOfCode& code, A64EmitContext& ctx, size_t bitsize, Xbyak::Label& abort, Xbyak::Reg64 vaddr, MemoryPermission access_type) {
+    std::size_t check_offset = 0;
+
+    // Access to lower word....
+    switch (access_type) {
+    case MemoryPermission::Read:
+        check_offset = offsetof(TLBEntry, read_addr);
+        break;
+
+    case MemoryPermission::Write:
+        check_offset = offsetof(TLBEntry, write_addr);
+        break;
+
+    case MemoryPermission::Execute:
+        check_offset = offsetof(TLBEntry, execute_addr);
+        break;
+
+    default:
+        UNREACHABLE();
+        break;
+    }
+
+    const Xbyak::Reg64 tmp = ctx.reg_alloc.ScratchGpr();
+    const Xbyak::Reg64 tmp2 = ctx.reg_alloc.ScratchGpr();
+    const Xbyak::Reg64 entryoff = ctx.reg_alloc.ScratchGpr();
+    const Xbyak::Reg64 hostaddr = ctx.reg_alloc.ScratchGpr();
+
+    EmitDetectMisalignedVAddr(code, ctx, bitsize, abort, vaddr, tmp);
+
+    code.mov(tmp, vaddr);
+    code.shr(tmp, static_cast<int>(page_bits));
+    code.mov(tmp2, tmp);                /// Store page index in tmp2...
+
+    code.and_(tmp, (1ULL << ctx.conf.tlb_index_mask_bits) - 1);
+
+    code.imul(entryoff, tmp, sizeof(TLBEntry));
+    code.add(entryoff, r14);
+
+    code.mov(tmp, qword[entryoff + check_offset]);
+
+    code.shr(tmp, static_cast<int>(page_bits));         /// Get the page index
+    code.cmp(tmp, tmp2);                                /// Compare the page index stored.
+
+    code.jne(abort, code.T_NEAR);
+
+    code.mov(hostaddr, qword[entryoff + offsetof(TLBEntry, host_base)]);
+
+    code.mov(tmp, vaddr);
+    code.and_(tmp, static_cast<u64>(page_mask));
+
+    return hostaddr + tmp;
+}
+
 template<std::size_t bitsize>
 const void* EmitReadMemoryMov(BlockOfCode& code, int value_idx, const Xbyak::RegExp& addr, bool ordered) {
     if (ordered) {
