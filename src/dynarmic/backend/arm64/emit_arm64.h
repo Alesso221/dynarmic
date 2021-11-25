@@ -128,6 +128,10 @@ struct EmitConfig {
     u8 detect_misaligned_access_via_page_table;
     bool only_detect_misalignment_via_page_table_on_page_boundary;
 
+    // TLB
+    u64 tlb_pointer;
+    u64 tlb_index_mask;
+
     // Fastmem
     u64 fastmem_pointer;
     bool recompile_on_fastmem_failure;

@@ -43,9 +43,12 @@ static RunCodeCallbacks GenRunCodeCallbacks(A32::UserCallbacks* cb, CodePtr (*Lo
 
 static std::function<void(BlockOfCode&)> GenRCP(const A32::UserConfig& conf) {
     return [conf](BlockOfCode& code) {
-        if (conf.page_table) {
+        if (conf.tlb_entries) {
+            code.mov(code.r14, mcl::bit_cast<u64>(conf.tlb_entries));
+        } else if (conf.page_table) {
             code.mov(code.r14, mcl::bit_cast<u64>(conf.page_table));
         }
+
         if (conf.fastmem_pointer) {
             code.mov(code.r13, mcl::bit_cast<u64>(conf.fastmem_pointer));
         }

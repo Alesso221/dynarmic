@@ -12,6 +12,7 @@
 #include <optional>
 
 #include "dynarmic/interface/optimization_flags.h"
+#include "dynarmic/interface/tlb.h"
 
 namespace Dynarmic {
 class ExclusiveMonitor;
@@ -266,6 +267,17 @@ struct UserConfig {
     /// recompilation of that block with fastmem disabled. Recompiled code will use memory
     /// callbacks.
     bool recompile_on_exclusive_fastmem_failure = true;
+    /// TLB entries pointer
+    /// This is used for extremely fast lookup, that can be easily flushed for multi address-space purposes.
+    /// If the TLB misses (wrong access permission or the TLB entry for the address does not exist),
+    /// the JIT will fallback to calling the MemoryRead*/MemoryWrite* callbacks. It's expected that
+    /// during those hooks, users will manage to fill in new TLB entries.
+    ///
+    /// Note: The page table serves a similar purpose, but in the case of difficulties maintaining and switching
+    ///       page entries for performance reasons, it's preferred to use this.
+    TLBEntry *tlb_entries = nullptr;
+    /// The number of bits sliced from address's page number to calculate the TLB entry index.
+    int tlb_index_mask_bits = 9;
 
     /// This option relates to translation. Generally when we run into an unpredictable
     /// instruction the ExceptionRaised callback is called. If this is true, we define
