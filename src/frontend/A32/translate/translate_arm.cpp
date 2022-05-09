@@ -47,7 +47,7 @@ IR::Block TranslateArm(LocationDescriptor descriptor, MemoryReadCodeFuncType mem
         } else if (const auto decoder = DecodeArm<ArmTranslatorVisitor>(arm_instruction)) {
             should_continue = decoder->get().call(visitor, arm_instruction);
         } else {
-            should_continue = visitor.arm_UDF();
+            should_continue = visitor.InterpretThisInstruction();
         }
 
         if (visitor.cond_state == ConditionalState::Break) {
@@ -88,7 +88,7 @@ bool TranslateSingleArmInstruction(IR::Block& block, LocationDescriptor descript
     } else if (const auto decoder = DecodeArm<ArmTranslatorVisitor>(arm_instruction)) {
         should_continue = decoder->get().call(visitor, arm_instruction);
     } else {
-        should_continue = visitor.arm_UDF();
+        should_continue = visitor.InterpretThisInstruction();
     }
 
     // TODO: Feedback resulting cond status to caller somehow.
