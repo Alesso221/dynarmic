@@ -185,10 +185,19 @@ void EmitA64::EmitFPCompare32(EmitContext& ctx, IR::Inst* inst) {
     ARM64Reg reg_b = EncodeRegToSingle(ctx.reg_alloc.UseFpr(args[1]));
     bool exc_on_qnan = args[2].GetImmediateU1();
 
+    // TODO: Check zero value comparison
     if (exc_on_qnan) {
-        code.fp_emitter.FCMPE(reg_a, reg_b);
+        if (args[1].IsImmediate() && args[1].GetImmediateU32() == 0) {
+            code.fp_emitter.FCMPE(reg_a);
+        } else {
+            code.fp_emitter.FCMPE(reg_a, reg_b);
+        }
     } else {
-        code.fp_emitter.FCMP(reg_a, reg_b);
+        if (args[1].IsImmediate() && args[1].GetImmediateU32() == 0) {
+            code.fp_emitter.FCMP(reg_a);
+        } else {
+            code.fp_emitter.FCMP(reg_a, reg_b);
+        }
     }
 
     ARM64Reg nzcv = SetFpscrNzcvFromFlags(code, ctx);
@@ -201,10 +210,19 @@ void EmitA64::EmitFPCompare64(EmitContext& ctx, IR::Inst* inst) {
     const ARM64Reg reg_b = EncodeRegToDouble(ctx.reg_alloc.UseFpr(args[1]));
     bool exc_on_qnan = args[2].GetImmediateU1();
 
+    // TODO: Check zero value comparison
     if (exc_on_qnan) {
-        code.fp_emitter.FCMPE(reg_a, reg_b);
+        if (args[1].IsImmediate() && args[1].GetImmediateU32() == 0) {
+            code.fp_emitter.FCMPE(reg_a);
+        } else {
+            code.fp_emitter.FCMPE(reg_a, reg_b);
+        }
     } else {
-        code.fp_emitter.FCMP(reg_a, reg_b);
+        if (args[1].IsImmediate() && args[1].GetImmediateU32() == 0) {
+            code.fp_emitter.FCMP(reg_a);
+        } else {
+            code.fp_emitter.FCMP(reg_a, reg_b);
+        }
     }
 
     ARM64Reg nzcv = SetFpscrNzcvFromFlags(code, ctx);
