@@ -59,7 +59,7 @@ SigHandler sig_handler;
 
 SigHandler::SigHandler() {
     // Method below from dolphin.
-
+    /*
     constexpr std::size_t signal_stack_size =
         static_cast<std::size_t>(std::max(SIGSTKSZ, 2 * 1024 * 1024));
 
@@ -75,7 +75,7 @@ SigHandler::SigHandler() {
     sa.sa_sigaction = &SigHandler::SigAction;
     sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
     sigemptyset(&sa.sa_mask);
-    sigaction(SIGSEGV, &sa, &old_sa_segv);
+    sigaction(SIGSEGV, &sa, &old_sa_segv);*/
 }
 
 SigHandler::~SigHandler() {
