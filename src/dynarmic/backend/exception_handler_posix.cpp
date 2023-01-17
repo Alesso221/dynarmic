@@ -70,7 +70,7 @@ private:
     static void SigAction(int sig, siginfo_t* info, void* raw_context);
 };
 
-SigHandler sig_handler;
+// SigHandler sig_handler;
 
 SigHandler::SigHandler() {
     const size_t signal_stack_size = std::max<size_t>(SIGSTKSZ, 2 * 1024 * 1024);
